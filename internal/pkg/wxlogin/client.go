@@ -47,6 +47,7 @@ func NewClient(id, secret string) *Client {
 	}
 }
 
+// Code2Session 调用微信 jscode2session 接口并处理错误码
 func (c *Client) Code2Session(ctx context.Context, code string) (*Code2SessionResp, error) {
 	apiURL := fmt.Sprintf(
 		"https://api.weixin.qq.com/sns/jscode2session?appid=%s&secret=%s&js_code=%s&grant_type=authorization_code",
@@ -71,6 +72,9 @@ func (c *Client) Code2Session(ctx context.Context, code string) (*Code2SessionRe
 	var result Code2SessionResp
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode wx code2session response: %w", err)
+	}
+	if result.OpenID == "" || result.SessionKey == "" {
+		return nil, fmt.Errorf("wx code2session missing openid or session_key")
 	}
 
 	return &result, nil

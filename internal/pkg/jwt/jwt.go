@@ -27,17 +27,17 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-func Sign(cfg JwtConfig, claim Claims) (string, error) {
+func Sign(secret string, claim Claims) (string, error) {
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claim)
-	return t.SignedString([]byte(cfg.JwtSecret))
+	return t.SignedString([]byte(secret))
 }
 
-func Parse(cfg JwtConfig, token string) (*Claims, error) {
+func Parse(secret string, token string) (*Claims, error) {
 	t, err := jwt.ParseWithClaims(token, &Claims{}, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("jwt: unexpected signing method")
 		}
-		return []byte(cfg.JwtSecret), nil
+		return []byte(secret), nil
 	})
 	if err != nil {
 		return nil, err
@@ -52,10 +52,11 @@ func Parse(cfg JwtConfig, token string) (*Claims, error) {
 
 // JwtConfig 是 JWT 签发和解析配置。
 type JwtConfig struct {
-	JwtSecret         string        `json:"jwt_secret"`         // 签名密钥
-	JwtIssuer         string        `json:"jwt_issuer"`         // 签发方，对应标准声明 iss
-	Expiration        time.Duration `json:"expiration"`         // access token 有效期
-	RefreshExpiration time.Duration `json:"refresh_expiration"` // refresh token 有效期
+	Issuer            string
+	JwtSecret         string        // 签名密钥
+	JwtIssuer         string        // 签发方，对应标准声明 iss
+	Expiration        time.Duration // access token 有效期
+	RefreshExpiration time.Duration // refresh token 有效期
 }
 
 func GetUserConfig() JwtConfig {
