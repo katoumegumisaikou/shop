@@ -48,6 +48,10 @@ func NewService(
 	}
 }
 
+// checkMpLoginDependencies 检查小程序登录链路运行所需的依赖。
+//
+// 这些错误都属于服务启动或依赖注入配置问题，不能暴露给用户具体细节，
+// 因此统一包装成 ErrInternal，交给 handler 层转换为 500 响应。
 func (s *Service) checkMpLoginDependencies() error {
 	if s == nil {
 		return errs.ErrInternal.WithMsg("account service is not initialized")
@@ -60,6 +64,28 @@ func (s *Service) checkMpLoginDependencies() error {
 	}
 	if s.wxMP == nil {
 		return errs.ErrInternal.WithMsg("wechat mini program client is not initialized")
+	}
+	if s.userCfg.JwtSecret == "" {
+		return errs.ErrInternal.WithMsg("user jwt secret is not configured")
+	}
+	if s.userCfg.Expiration <= 0 {
+		return errs.ErrInternal.WithMsg("user jwt expiration is not configured")
+	}
+	if s.userCfg.RefreshExpiration <= 0 {
+		return errs.ErrInternal.WithMsg("user refresh jwt expiration is not configured")
+	}
+	return nil
+}
+
+func (s *Service) checkH5CallbackDependencies() error {
+	if s == nil {
+		return errs.ErrInternal.WithMsg("account service is not initialized")
+	}
+	if s.userRepo == nil {
+		return errs.ErrInternal.WithMsg("account user repository is not initialized")
+	}
+	if s.wxOA == nil {
+		return errs.ErrInternal.WithMsg("wechat official account client is not initialized")
 	}
 	if s.userCfg.JwtSecret == "" {
 		return errs.ErrInternal.WithMsg("user jwt secret is not configured")
@@ -165,4 +191,50 @@ func (s *Service) signUserToken(id int64) (*MpLoginResult, error) {
 		UserID:       id,
 		ExpiresIn:    int64(s.userCfg.Expiration.Seconds()),
 	}, nil
+}
+
+// H5GetOAuthURL 获取公众号 OAuth2 授权 URL。
+func (s *Service) H5GetOAuthURL(_ context.Context, redirectURI, state string) string {
+	return s.wxOA.GetOAuthURL(redirectURI, state)
+}
+
+type H5CallbackResult = MpLoginResult
+
+// H5Callback 公众号 OAuth2 回调，upsert user，返回 token
+func (s *Service) H5Callback(ctx context.Context, code string) (*H5CallbackResult, error) {
+	if err := s.checkH5CallbackDependencies(); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.wxOA.OAuthCode2Token(ctx, code)
+	if err != nil {
+		return nil, errs.ErrSessionExpired
+	}
+
+	id := snowflake.NextID()
+	openid := resp.OpenID
+	var unionid *string
+	if resp.UnionID != "" {
+		unionid = new(string)
+		*unionid = resp.UnionID
+	}
+
+	u := &User{
+		ID:       id,
+		OpenidH5: &openid,
+		Unionid:  unionid,
+		Source:   "h5",
+		Status:   "active",
+	}
+
+	if err := s.userRepo.UpsertByOpenidH5(ctx, u); err != nil {
+		return nil, errs.ErrInternal
+	}
+
+	found, err := s.userRepo.FindByOpenidH5(ctx, openid)
+	if err != nil || found == nil {
+		return nil, errs.ErrInternal
+	}
+
+	return s.signUserToken(found.ID)
 }

@@ -16,8 +16,10 @@ import (
 )
 
 type mockUserRepo struct {
-	upserted *User
-	found    *User
+	upserted   *User
+	found      *User
+	h5Upserted *User
+	h5Found    *User
 }
 
 func (m *mockUserRepo) FindByOpenidMP(_ context.Context, openid string) (*User, error) {
@@ -32,9 +34,23 @@ func (m *mockUserRepo) UpsertByOpenidMP(_ context.Context, user *User) error {
 	return nil
 }
 
+func (m *mockUserRepo) FindByOpenidH5(_ context.Context, openid string) (*User, error) {
+	if m.h5Found != nil && m.h5Found.OpenidH5 != nil && *m.h5Found.OpenidH5 == openid {
+		return m.h5Found, nil
+	}
+	return nil, nil
+}
+
+func (m *mockUserRepo) UpsertByOpenidH5(_ context.Context, user *User) error {
+	m.h5Upserted = user
+	return nil
+}
+
 type mockWxLoginClient struct {
-	resp *wxlogin.Code2SessionResp
-	err  error
+	resp      *wxlogin.Code2SessionResp
+	err       error
+	oauthResp *wxlogin.OAuthResp
+	oauthErr  error
 }
 
 func (m mockWxLoginClient) Code2Session(context.Context, string) (*wxlogin.Code2SessionResp, error) {
@@ -47,6 +63,10 @@ func (m mockWxLoginClient) DecryptUserData(string, string, string) (map[string]a
 
 func (m mockWxLoginClient) GetOAuthURL(string, string) string {
 	return ""
+}
+
+func (m mockWxLoginClient) OAuthCode2Token(context.Context, string) (*wxlogin.OAuthResp, error) {
+	return m.oauthResp, m.oauthErr
 }
 
 func TestMpLoginSuccess(t *testing.T) {
@@ -139,5 +159,69 @@ func TestMpLoginMissingDependency(t *testing.T) {
 	}
 	if !errors.Is(err, errs.ErrInternal) {
 		t.Fatalf("expected internal error, got %v", err)
+	}
+}
+
+func TestH5CallbackSuccessUsesOpenidH5(t *testing.T) {
+	ctx := context.Background()
+	snowflake.Init(1)
+	pkgjwt.InitJwtConfig(pkgjwt.JwtConfig{
+		JwtSecret:         "test-secret",
+		Expiration:        time.Hour,
+		RefreshExpiration: 24 * time.Hour,
+	}, pkgjwt.JwtConfig{})
+
+	openid := "h5-openid-001"
+	unionid := "unionid-001"
+	repo := &mockUserRepo{
+		h5Found: &User{
+			ID:       2002,
+			OpenidH5: &openid,
+			Unionid:  &unionid,
+			Source:   "h5",
+			Status:   "active",
+		},
+	}
+	wx := mockWxLoginClient{
+		oauthResp: &wxlogin.OAuthResp{
+			OpenID:       openid,
+			UnionID:      unionid,
+			AccessToken:  "wx-access-token",
+			RefreshToken: "wx-refresh-token",
+			ExpiresIn:    7200,
+		},
+	}
+
+	svc := NewService(repo, nil, nil, wx)
+	result, err := svc.H5Callback(ctx, "oauth-code")
+	if err != nil {
+		t.Fatalf("H5Callback returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected login result, got nil")
+	}
+	if result.UserID != repo.h5Found.ID {
+		t.Fatalf("expected result user id %d, got %d", repo.h5Found.ID, result.UserID)
+	}
+
+	if repo.h5Upserted == nil {
+		t.Fatal("expected H5 user to be upserted")
+	}
+	if repo.h5Upserted.OpenidH5 == nil || *repo.h5Upserted.OpenidH5 != openid {
+		t.Fatalf("expected upsert openid_h5 %q, got %#v", openid, repo.h5Upserted.OpenidH5)
+	}
+	if repo.h5Upserted.OpenidMP != nil {
+		t.Fatalf("expected openid_mp to stay nil for H5 login, got %#v", repo.h5Upserted.OpenidMP)
+	}
+	if repo.h5Upserted.Source != "h5" {
+		t.Fatalf("expected source h5, got %q", repo.h5Upserted.Source)
+	}
+
+	claims, err := pkgjwt.Parse("test-secret", result.AccessToken)
+	if err != nil {
+		t.Fatalf("parse access token: %v", err)
+	}
+	if claims.Sub != repo.h5Found.ID {
+		t.Fatalf("expected token subject %d, got %d", repo.h5Found.ID, claims.Sub)
 	}
 }
