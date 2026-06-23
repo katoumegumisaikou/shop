@@ -12,6 +12,9 @@ type UserRepo interface {
 	FindByOpenidH5(ctx context.Context, openid string) (*User, error)
 	UpsertByOpenidMP(ctx context.Context, user *User) error
 	UpsertByOpenidH5(ctx context.Context, user *User) error
+	// CountActiveByPhoneExclude 查询 status='active' 且手机号匹配、且 id != excludeUserID 的用户数量。
+	CountActiveByPhoneExclude(ctx context.Context, phone string, excludeUserID int64) (int64, error)
+	Update(ctx context.Context, id int64, updates map[string]any) error
 }
 
 type userRepoImpl struct {
@@ -59,4 +62,23 @@ func (r *userRepoImpl) UpsertByOpenidH5(ctx context.Context, user *User) error {
 			DoUpdates: clause.AssignmentColumns([]string{"unionid", "source", "updated_at"}),
 		}).
 		Create(user).Error
+}
+
+func (r *userRepoImpl) CountActiveByPhoneExclude(ctx context.Context, phone string, excludeUserID int64) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&User{}).
+		Where("phone = ? AND status = ? AND id <> ?", phone, "active", excludeUserID).
+		Count(&count).Error
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (r *userRepoImpl) Update(ctx context.Context, id int64, updates map[string]any) error {
+	return r.db.WithContext(ctx).
+		Model(&User{}).
+		Where("id = ?", id).
+		Updates(updates).Error
 }

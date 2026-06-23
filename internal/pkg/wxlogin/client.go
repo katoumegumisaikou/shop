@@ -2,6 +2,9 @@ package wxlogin
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -91,6 +94,89 @@ func (c *Client) Code2Session(ctx context.Context, code string) (*Code2SessionRe
 	}
 
 	return &result, nil
+}
+
+// DecryptUserData 解密微信小程序加密数据，并校验数据归属的 appid。
+func (c *Client) DecryptUserData(sessionKey, encryptedData, iv string) (map[string]any, error) {
+	key, err := base64.StdEncoding.DecodeString(sessionKey)
+	if err != nil {
+		return nil, fmt.Errorf("decode wx session key: %w", err)
+	}
+	if len(key) != aes.BlockSize {
+		return nil, fmt.Errorf("wx session key length: %d", len(key))
+	}
+
+	cipherText, err := base64.StdEncoding.DecodeString(encryptedData)
+	if err != nil {
+		return nil, fmt.Errorf("decode wx encrypted data: %w", err)
+	}
+	if len(cipherText) == 0 || len(cipherText)%aes.BlockSize != 0 {
+		return nil, fmt.Errorf("wx encrypted data length: %d", len(cipherText))
+	}
+
+	ivBytes, err := base64.StdEncoding.DecodeString(iv)
+	if err != nil {
+		return nil, fmt.Errorf("decode wx iv: %w", err)
+	}
+	if len(ivBytes) != aes.BlockSize {
+		return nil, fmt.Errorf("wx iv length: %d", len(ivBytes))
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("new wx aes cipher: %w", err)
+	}
+
+	plainText := make([]byte, len(cipherText))
+	cipher.NewCBCDecrypter(block, ivBytes).CryptBlocks(plainText, cipherText)
+	plainText, err = pkcs7Unpad(plainText, aes.BlockSize)
+	if err != nil {
+		return nil, err
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(plainText, &result); err != nil {
+		return nil, fmt.Errorf("decode wx decrypted data: %w", err)
+	}
+	if err := c.validateWatermark(result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func pkcs7Unpad(data []byte, blockSize int) ([]byte, error) {
+	if len(data) == 0 || len(data)%blockSize != 0 {
+		return nil, fmt.Errorf("wx decrypted data length: %d", len(data))
+	}
+	padding := int(data[len(data)-1])
+	if padding == 0 || padding > blockSize || padding > len(data) {
+		return nil, fmt.Errorf("wx decrypted data padding: %d", padding)
+	}
+	for _, value := range data[len(data)-padding:] {
+		if int(value) != padding {
+			return nil, fmt.Errorf("wx decrypted data padding mismatch")
+		}
+	}
+	return data[:len(data)-padding], nil
+}
+
+func (c *Client) validateWatermark(data map[string]any) error {
+	rawWatermark, ok := data["watermark"]
+	if !ok {
+		return fmt.Errorf("wx decrypted data missing watermark")
+	}
+	watermark, ok := rawWatermark.(map[string]any)
+	if !ok {
+		return fmt.Errorf("wx decrypted data invalid watermark")
+	}
+	appID, ok := watermark["appid"].(string)
+	if !ok || appID == "" {
+		return fmt.Errorf("wx decrypted data missing appid")
+	}
+	if c.appID != "" && appID != c.appID {
+		return fmt.Errorf("wx decrypted data appid mismatch")
+	}
+	return nil
 }
 
 // GetOAuthURL 生成公众号 OAuth2 授权跳转 URL。

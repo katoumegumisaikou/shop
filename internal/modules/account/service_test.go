@@ -16,10 +16,15 @@ import (
 )
 
 type mockUserRepo struct {
-	upserted   *User
-	found      *User
-	h5Upserted *User
-	h5Found    *User
+	upserted                     *User
+	found                        *User
+	h5Upserted                   *User
+	h5Found                      *User
+	countActiveByPhoneExclude    int64
+	countActiveByPhoneExcludeErr error
+	updatedID                    int64
+	updates                      map[string]any
+	updateErr                    error
 }
 
 func (m *mockUserRepo) FindByOpenidMP(_ context.Context, openid string) (*User, error) {
@@ -44,6 +49,16 @@ func (m *mockUserRepo) FindByOpenidH5(_ context.Context, openid string) (*User, 
 func (m *mockUserRepo) UpsertByOpenidH5(_ context.Context, user *User) error {
 	m.h5Upserted = user
 	return nil
+}
+
+func (m *mockUserRepo) CountActiveByPhoneExclude(_ context.Context, _ string, _ int64) (int64, error) {
+	return m.countActiveByPhoneExclude, m.countActiveByPhoneExcludeErr
+}
+
+func (m *mockUserRepo) Update(_ context.Context, id int64, updates map[string]any) error {
+	m.updatedID = id
+	m.updates = updates
+	return m.updateErr
 }
 
 type mockWxLoginClient struct {
@@ -156,6 +171,18 @@ func TestMpLoginMissingDependency(t *testing.T) {
 	}
 	if result != nil {
 		t.Fatalf("expected nil result, got %#v", result)
+	}
+	if !errors.Is(err, errs.ErrInternal) {
+		t.Fatalf("expected internal error, got %v", err)
+	}
+}
+
+func TestBindPhoneMissingDependency(t *testing.T) {
+	svc := &Service{}
+
+	err := svc.BindPhone(context.Background(), 1001, "encrypted-data", "iv")
+	if err == nil {
+		t.Fatal("expected missing dependency error")
 	}
 	if !errors.Is(err, errs.ErrInternal) {
 		t.Fatalf("expected internal error, got %v", err)

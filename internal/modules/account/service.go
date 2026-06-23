@@ -54,47 +54,63 @@ func NewService(
 // 因此统一包装成 ErrInternal，交给 handler 层转换为 500 响应。
 func (s *Service) checkMpLoginDependencies() error {
 	if s == nil {
-		return errs.ErrInternal.WithMsg("account service is not initialized")
+		return errs.ErrInternal.WithMsg("账号服务未初始化")
 	}
 	if s.userRepo == nil {
-		return errs.ErrInternal.WithMsg("account user repository is not initialized")
+		return errs.ErrInternal.WithMsg("账号用户仓储未初始化")
 	}
 	if s.rdb == nil {
-		return errs.ErrInternal.WithMsg("account redis client is not initialized")
+		return errs.ErrInternal.WithMsg("账号 Redis 客户端未初始化")
 	}
 	if s.wxMP == nil {
-		return errs.ErrInternal.WithMsg("wechat mini program client is not initialized")
+		return errs.ErrInternal.WithMsg("微信小程序客户端未初始化")
 	}
 	if s.userCfg.JwtSecret == "" {
-		return errs.ErrInternal.WithMsg("user jwt secret is not configured")
+		return errs.ErrInternal.WithMsg("用户 JWT 密钥未配置")
 	}
 	if s.userCfg.Expiration <= 0 {
-		return errs.ErrInternal.WithMsg("user jwt expiration is not configured")
+		return errs.ErrInternal.WithMsg("用户 JWT 有效期未配置")
 	}
 	if s.userCfg.RefreshExpiration <= 0 {
-		return errs.ErrInternal.WithMsg("user refresh jwt expiration is not configured")
+		return errs.ErrInternal.WithMsg("用户刷新 JWT 有效期未配置")
 	}
 	return nil
 }
 
 func (s *Service) checkH5CallbackDependencies() error {
 	if s == nil {
-		return errs.ErrInternal.WithMsg("account service is not initialized")
+		return errs.ErrInternal.WithMsg("账号服务未初始化")
 	}
 	if s.userRepo == nil {
-		return errs.ErrInternal.WithMsg("account user repository is not initialized")
+		return errs.ErrInternal.WithMsg("账号用户仓储未初始化")
 	}
 	if s.wxOA == nil {
-		return errs.ErrInternal.WithMsg("wechat official account client is not initialized")
+		return errs.ErrInternal.WithMsg("微信公众号客户端未初始化")
 	}
 	if s.userCfg.JwtSecret == "" {
-		return errs.ErrInternal.WithMsg("user jwt secret is not configured")
+		return errs.ErrInternal.WithMsg("用户 JWT 密钥未配置")
 	}
 	if s.userCfg.Expiration <= 0 {
-		return errs.ErrInternal.WithMsg("user jwt expiration is not configured")
+		return errs.ErrInternal.WithMsg("用户 JWT 有效期未配置")
 	}
 	if s.userCfg.RefreshExpiration <= 0 {
-		return errs.ErrInternal.WithMsg("user refresh jwt expiration is not configured")
+		return errs.ErrInternal.WithMsg("用户刷新 JWT 有效期未配置")
+	}
+	return nil
+}
+
+func (s *Service) checkBindPhoneDependencies() error {
+	if s == nil {
+		return errs.ErrInternal.WithMsg("账号服务未初始化")
+	}
+	if s.userRepo == nil {
+		return errs.ErrInternal.WithMsg("账号用户仓储未初始化")
+	}
+	if s.rdb == nil {
+		return errs.ErrInternal.WithMsg("账号 Redis 客户端未初始化")
+	}
+	if s.wxMP == nil {
+		return errs.ErrInternal.WithMsg("微信小程序客户端未初始化")
 	}
 	return nil
 }
@@ -237,4 +253,41 @@ func (s *Service) H5Callback(ctx context.Context, code string) (*H5CallbackResul
 	}
 
 	return s.signUserToken(found.ID)
+}
+
+// BindPhone 解密微信数据包并绑定手机号。
+func (s *Service) BindPhone(ctx context.Context, userID int64, encryptedData, iv string) error {
+	if err := s.checkBindPhoneDependencies(); err != nil {
+		return err
+	}
+
+	skKey := fmt.Sprintf("mp:%d", userID)
+	sessionKey, err := s.rdb.Get(ctx, skKey).Result()
+	if err != nil {
+		return errs.ErrInternal
+	}
+
+	data, err := s.wxMP.DecryptUserData(sessionKey, encryptedData, iv)
+	if err != nil {
+		return errs.ErrInternal.WithMsg("解码失败")
+	}
+
+	phone, ok := data["purePhoneNumber"].(string)
+	if !ok || phone == "" {
+		return errs.ErrPhoneFormat
+	}
+
+	// 数据库查找是否被其他活跃账号绑定
+	count, err := s.userRepo.CountActiveByPhoneExclude(ctx, phone, userID)
+	if err != nil {
+		return errs.ErrInternal
+	} else if count > 0 {
+		// 手机号已经使用过
+		return errs.ErrPhoneBound
+	}
+
+	if err := s.userRepo.Update(ctx, userID, map[string]any{"phone": phone}); err != nil {
+		return errs.ErrInternal
+	}
+	return nil
 }

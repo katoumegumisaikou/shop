@@ -27,3 +27,9 @@ func ToMpLoginResponse(result *MpLoginResult) MpLoginResponse {
 		UserID:       result.UserID,
 	}
 }
+
+// BindPhoneReq 绑定手机号请求。
+type BindPhoneReq struct {
+	EncryptedData string `json:"encrypted_data" binding:"required"`
+	IV            string `json:"iv"             binding:"required"`
+}

@@ -124,3 +124,26 @@ func (h *Handler) safeH5Redirect(state string) string {
 
 	return state
 }
+
+func (h *Handler) BindPhone(c *gin.Context) {
+	var req BindPhoneReq
+	err := c.ShouldBind(&req)
+	if err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+
+	userID := c.GetInt64("user_id")
+	if userID == 0 {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+
+	// 业务逻辑
+	if err = h.svc.BindPhone(c.Request.Context(), userID, req.EncryptedData, req.IV); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+
+}
