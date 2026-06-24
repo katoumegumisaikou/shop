@@ -287,6 +287,40 @@ func TestLogoutBlacklistsAccessAndRefreshTokens(t *testing.T) {
 	}
 }
 
+func TestSendSmsCodeStoresCodeAndRateLimits(t *testing.T) {
+	ctx := context.Background()
+	redisServer := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() {
+		_ = rdb.Close()
+	})
+
+	svc := NewService(nil, rdb, nil, nil)
+	code, err := svc.SendSmsCode(ctx, "13800138000", "register")
+	if err != nil {
+		t.Fatalf("SendSmsCode returned error: %v", err)
+	}
+	if len(code) != 6 {
+		t.Fatalf("expected 6 digit code, got %q", code)
+	}
+
+	storedCode, err := rdb.Get(ctx, "shop:sms:code:register:13800138000").Result()
+	if err != nil {
+		t.Fatalf("expected stored sms code: %v", err)
+	}
+	if storedCode != code {
+		t.Fatalf("expected stored code %q, got %q", code, storedCode)
+	}
+
+	if _, err := svc.SendSmsCode(ctx, "13800138000", "register"); !errors.Is(err, errs.ErrRateLimit) {
+		t.Fatalf("expected rate limit error, got %v", err)
+	}
+
+	if _, err := svc.SendSmsCode(ctx, "13800138000", "reset"); err != nil {
+		t.Fatalf("expected different purpose to use separate rate key, got %v", err)
+	}
+}
+
 func signTestUserToken(t *testing.T, secret string, userID int64, jti string, expiresAt time.Time) string {
 	t.Helper()
 

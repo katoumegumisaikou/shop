@@ -38,3 +38,15 @@ type BindPhoneReq struct {
 type RefreshTokenReq struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
+
+// SmsReq 发送短信验证码请求。
+type SmsReq struct {
+	Phone   string `json:"phone"   binding:"required,len=11,numeric"`
+	Purpose string `json:"purpose" binding:"required,oneof=register reset"` // 区分注册和重置密码
+}
+
+// SmsResp 短信验证码响应。
+type SmsResp struct {
+	Code      string `json:"code"`       // 开发期通过 HTTP 返回的验证码
+	ExpiresIn int64  `json:"expires_in"` // 验证码有效期，单位秒
+}

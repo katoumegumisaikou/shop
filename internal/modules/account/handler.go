@@ -231,3 +231,24 @@ func getCookieToken(c *gin.Context, name string) (string, bool) {
 	}
 	return token, true
 }
+
+// SendSmsCode 验证码的发送是通过http直接返回，目前没有接入短信平台
+func (h *Handler) SendSmsCode(c *gin.Context) {
+	var req SmsReq
+	err := c.ShouldBind(&req)
+	if err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+
+	code, err := h.svc.SendSmsCode(c.Request.Context(), req.Phone, req.Purpose)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	response.OK(c, SmsResp{
+		Code:      code,
+		ExpiresIn: int64(smsCodeTTL.Seconds()),
+	})
+}

@@ -1,6 +1,8 @@
 package account
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -123,6 +125,58 @@ func TestH5CallbackHTTPMissingCode(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
+func TestSendSmsCodeHTTPReturnsCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	redisServer := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() {
+		_ = rdb.Close()
+	})
+
+	h := NewHandler(NewService(nil, rdb, nil, nil), pkgjwt.JwtConfig{}, pkgjwt.JwtConfig{}, false, nil)
+	r := gin.New()
+	r.POST("/sms/code", h.SendSmsCode)
+
+	w := httptest.NewRecorder()
+	reqBody := []byte(`{"phone":"13800138000","purpose":"register"}`)
+	req := httptest.NewRequest(http.MethodPost, "/sms/code", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, w.Code, w.Body.String())
+	}
+
+	var body struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Code      string `json:"code"`
+			ExpiresIn int64  `json:"expires_in"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response body: %v", err)
+	}
+	if body.Code != 0 {
+		t.Fatalf("expected response code 0, got %d", body.Code)
+	}
+	if len(body.Data.Code) != 6 {
+		t.Fatalf("expected 6 digit sms code, got %q", body.Data.Code)
+	}
+	if body.Data.ExpiresIn != int64(smsCodeTTL.Seconds()) {
+		t.Fatalf("expected expires_in %d, got %d", int64(smsCodeTTL.Seconds()), body.Data.ExpiresIn)
+	}
+
+	storedCode, err := rdb.Get(req.Context(), "shop:sms:code:register:13800138000").Result()
+	if err != nil {
+		t.Fatalf("expected stored sms code: %v", err)
+	}
+	if storedCode != body.Data.Code {
+		t.Fatalf("expected stored code %q, got %q", body.Data.Code, storedCode)
 	}
 }
 

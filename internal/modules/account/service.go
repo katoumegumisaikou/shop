@@ -12,12 +12,17 @@ import (
 	"shop/internal/pkg/errs"
 	pkgjwt "shop/internal/pkg/jwt"
 	"shop/internal/pkg/snowflake"
+	"shop/internal/pkg/utils"
 	"shop/internal/pkg/wxlogin"
 )
 
 const (
 	// sessionKeyTTL 微信 session_key 缓存时长（2 小时）。
 	sessionKeyTTL = 2 * time.Hour
+	// smsRateTTL 短信发送频率限制（60 秒内最多 1 次）。
+	smsRateTTL = 60 * time.Second
+	// smsCodeTTL 短信验证码有效期（5 分钟）。
+	smsCodeTTL = 5 * time.Minute
 )
 
 // Service 账号服务。
@@ -137,6 +142,16 @@ func (s *Service) checkRefreshTokenDependencies() error {
 	}
 	if s.userCfg.RefreshExpiration <= 0 {
 		return errs.ErrInternal.WithMsg("用户刷新 JWT 有效期未配置")
+	}
+	return nil
+}
+
+func (s *Service) checkSmsCodeDependencies() error {
+	if s == nil {
+		return errs.ErrInternal.WithMsg("账号服务未初始化")
+	}
+	if s.rdb == nil {
+		return errs.ErrInternal.WithMsg("账号 Redis 客户端未初始化")
 	}
 	return nil
 }
@@ -384,4 +399,35 @@ func (s *Service) blacklistTokenClaims(ctx context.Context, claims *pkgjwt.Claim
 		return errs.ErrUnauth
 	}
 	return nil
+}
+
+func (s *Service) SendSmsCode(ctx context.Context, phone, purpose string) (string, error) {
+	if err := s.checkSmsCodeDependencies(); err != nil {
+		return "", err
+	}
+
+	// 速率限制
+	rateKey := fmt.Sprintf("shop:sms:rate:%s:%s", purpose, phone)
+	ok, err := s.rdb.SetNX(ctx, rateKey, "1", smsRateTTL).Result()
+	if err != nil {
+		return "", errs.ErrInternal
+	}
+	if !ok {
+		return "", errs.ErrRateLimit.WithMsg("发送过于频繁，请 60 秒后重试")
+	}
+
+	// 生成随机数
+	code, err := utils.GenerateSmsCode()
+	if err != nil {
+		_ = s.rdb.Del(ctx, rateKey).Err()
+		return "", errs.ErrInternal
+	}
+
+	codeKey := fmt.Sprintf("shop:sms:code:%s:%s", purpose, phone)
+	_, err = s.rdb.Set(ctx, codeKey, code, smsCodeTTL).Result()
+	if err != nil {
+		_ = s.rdb.Del(ctx, rateKey).Err()
+		return "", errs.ErrInternal
+	}
+	return code, nil
 }
