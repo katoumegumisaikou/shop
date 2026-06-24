@@ -35,7 +35,7 @@ func UserAuth(rdb *redis.Client, db *gorm.DB, jwtCfg pkgjwt.JwtConfig) gin.Handl
 		}
 
 		claims, err := pkgjwt.Parse(jwtCfg.JwtSecret, tokenStr)
-		if err != nil {
+		if err != nil || claims.Type != "user" {
 			response.Error(c, errs.ErrUnauth)
 			return
 		}

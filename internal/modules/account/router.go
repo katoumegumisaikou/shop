@@ -22,5 +22,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, rdb *redis.Client, db *gorm.
 		auth.GET("/h5/callback", h.H5Callback)
 		// sensitive 必须在 userAuth 之前，否则 auth 中间件读取 sensitive flag 时仍为 false
 		auth.POST("/bind-phone", sensitive, userAuth, h.BindPhone)
+		auth.POST("/refresh", h.RefreshToken)
+		auth.POST("/logout", sensitive, userAuth, h.Logout)
 	}
 }

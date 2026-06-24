@@ -33,3 +33,8 @@ type BindPhoneReq struct {
 	EncryptedData string `json:"encrypted_data" binding:"required"`
 	IV            string `json:"iv"             binding:"required"`
 }
+
+// RefreshTokenReq 刷新 token 请求。
+type RefreshTokenReq struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}

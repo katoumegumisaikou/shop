@@ -115,6 +115,32 @@ func (s *Service) checkBindPhoneDependencies() error {
 	return nil
 }
 
+func (s *Service) checkUserTokenDependencies() error {
+	if s == nil {
+		return errs.ErrInternal.WithMsg("账号服务未初始化")
+	}
+	if s.rdb == nil {
+		return errs.ErrInternal.WithMsg("账号 Redis 客户端未初始化")
+	}
+	if s.userCfg.JwtSecret == "" {
+		return errs.ErrInternal.WithMsg("用户 JWT 密钥未配置")
+	}
+	return nil
+}
+
+func (s *Service) checkRefreshTokenDependencies() error {
+	if err := s.checkUserTokenDependencies(); err != nil {
+		return err
+	}
+	if s.userCfg.Expiration <= 0 {
+		return errs.ErrInternal.WithMsg("用户 JWT 有效期未配置")
+	}
+	if s.userCfg.RefreshExpiration <= 0 {
+		return errs.ErrInternal.WithMsg("用户刷新 JWT 有效期未配置")
+	}
+	return nil
+}
+
 // MpLoginResult 小程序登录结果。
 type MpLoginResult struct {
 	AccessToken  string
@@ -288,6 +314,74 @@ func (s *Service) BindPhone(ctx context.Context, userID int64, encryptedData, iv
 
 	if err := s.userRepo.Update(ctx, userID, map[string]any{"phone": phone}); err != nil {
 		return errs.ErrInternal
+	}
+	return nil
+}
+
+func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (*MpLoginResult, error) {
+	if err := s.checkRefreshTokenDependencies(); err != nil {
+		return nil, err
+	}
+
+	// refresh token 一次性：立即加入黑名单
+	claims, err := s.parseUserToken(refreshToken)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.blacklistTokenClaims(ctx, claims); err != nil {
+		return nil, err
+	}
+
+	return s.signUserToken(claims.Sub)
+}
+
+func (s *Service) Logout(ctx context.Context, accessToken, refreshToken string) error {
+	if err := s.checkUserTokenDependencies(); err != nil {
+		return err
+	}
+
+	accessClaims, err := s.parseUserToken(accessToken)
+	if err != nil {
+		return err
+	}
+	if err := s.blacklistTokenClaims(ctx, accessClaims); err != nil {
+		return err
+	}
+
+	if refreshToken == "" {
+		return nil
+	}
+	refreshClaims, err := s.parseUserToken(refreshToken)
+	if err != nil {
+		return err
+	}
+	return s.blacklistTokenClaims(ctx, refreshClaims)
+}
+
+func (s *Service) parseUserToken(token string) (*pkgjwt.Claims, error) {
+	claims, err := pkgjwt.Parse(s.userCfg.JwtSecret, token)
+	if err != nil || claims.Type != "user" {
+		return nil, errs.ErrUnauth
+	}
+	return claims, nil
+}
+
+func (s *Service) blacklistTokenClaims(ctx context.Context, claims *pkgjwt.Claims) error {
+	if claims == nil || claims.JTI == "" || claims.ExpiresAt == nil {
+		return errs.ErrUnauth
+	}
+	exp := time.Until(claims.ExpiresAt.Time)
+	if exp <= 0 {
+		return errs.ErrUnauth
+	}
+
+	tokenKey := fmt.Sprintf("jwt:bl:%s", claims.JTI)
+	ok, err := s.rdb.SetNX(ctx, tokenKey, "1", exp).Result()
+	if err != nil {
+		return errs.ErrInternal
+	}
+	if !ok {
+		return errs.ErrUnauth
 	}
 	return nil
 }

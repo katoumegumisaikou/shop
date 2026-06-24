@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 
 	pkgjwt "shop/internal/pkg/jwt"
 	"shop/internal/pkg/snowflake"
@@ -40,7 +42,7 @@ func TestH5CallbackHTTPSetCookiesAndRedirect(t *testing.T) {
 		},
 	}
 	svc := NewService(repo, nil, nil, wx)
-	h := NewHandler(svc, pkgjwt.JwtConfig{RefreshExpiration: 24 * time.Hour}, false, nil)
+	h := NewHandler(svc, pkgjwt.JwtConfig{RefreshExpiration: 24 * time.Hour}, pkgjwt.JwtConfig{}, false, nil)
 
 	r := gin.New()
 	r.GET("/callback", h.H5Callback)
@@ -90,8 +92,8 @@ func TestH5CallbackHTTPSetCookiesAndRedirect(t *testing.T) {
 	if refreshCookie.Secure {
 		t.Fatal("expected refresh_token cookie to be insecure in non-prod handler")
 	}
-	if refreshCookie.Path != "/api/v1/c/auth/refresh" {
-		t.Fatalf("expected refresh_token path %q, got %q", "/api/v1/c/auth/refresh", refreshCookie.Path)
+	if refreshCookie.Path != refreshTokenCookiePath {
+		t.Fatalf("expected refresh_token path %q, got %q", refreshTokenCookiePath, refreshCookie.Path)
 	}
 	if refreshCookie.MaxAge != int((24 * time.Hour).Seconds()) {
 		t.Fatalf("expected refresh_token max age %d, got %d", int((24 * time.Hour).Seconds()), refreshCookie.MaxAge)
@@ -111,7 +113,7 @@ func TestH5CallbackHTTPSetCookiesAndRedirect(t *testing.T) {
 func TestH5CallbackHTTPMissingCode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	h := NewHandler(&Service{}, pkgjwt.JwtConfig{}, false, nil)
+	h := NewHandler(&Service{}, pkgjwt.JwtConfig{}, pkgjwt.JwtConfig{}, false, nil)
 	r := gin.New()
 	r.GET("/callback", h.H5Callback)
 
@@ -121,6 +123,72 @@ func TestH5CallbackHTTPMissingCode(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, w.Code)
+	}
+}
+
+func TestLogoutHTTPClearsCookiesAndBlacklistsTokens(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	pkgjwt.InitJwtConfig(pkgjwt.JwtConfig{
+		JwtSecret:         "test-secret",
+		Expiration:        time.Hour,
+		RefreshExpiration: 24 * time.Hour,
+	}, pkgjwt.JwtConfig{})
+
+	redisServer := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() {
+		_ = rdb.Close()
+	})
+
+	accessToken := signTestUserToken(t, "test-secret", 1001, "access-jti", time.Now().Add(time.Hour))
+	refreshToken := signTestUserToken(t, "test-secret", 1001, "refresh-jti", time.Now().Add(24*time.Hour))
+	h := NewHandler(NewService(nil, rdb, nil, nil), pkgjwt.GetUserConfig(), pkgjwt.JwtConfig{}, false, nil)
+
+	r := gin.New()
+	r.POST("/logout", h.Logout)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
+	req.AddCookie(&http.Cookie{Name: accessTokenCookieName, Value: accessToken, Path: accessTokenCookiePath})
+	req.AddCookie(&http.Cookie{Name: refreshTokenCookieName, Value: refreshToken, Path: refreshTokenCookiePath})
+	r.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, resp.StatusCode)
+	}
+
+	accessCookie := findCookie(t, resp.Cookies(), accessTokenCookieName)
+	if accessCookie.Path != accessTokenCookiePath {
+		t.Fatalf("expected access_token delete path %q, got %q", accessTokenCookiePath, accessCookie.Path)
+	}
+	if accessCookie.MaxAge >= 0 {
+		t.Fatalf("expected access_token delete max age < 0, got %d", accessCookie.MaxAge)
+	}
+	if accessCookie.Secure {
+		t.Fatal("expected access_token delete cookie to be insecure in non-prod handler")
+	}
+
+	refreshCookie := findCookie(t, resp.Cookies(), refreshTokenCookieName)
+	if refreshCookie.Path != refreshTokenCookiePath {
+		t.Fatalf("expected refresh_token delete path %q, got %q", refreshTokenCookiePath, refreshCookie.Path)
+	}
+	if refreshCookie.MaxAge >= 0 {
+		t.Fatalf("expected refresh_token delete max age < 0, got %d", refreshCookie.MaxAge)
+	}
+	if refreshCookie.Secure {
+		t.Fatal("expected refresh_token delete cookie to be insecure in non-prod handler")
+	}
+
+	for _, key := range []string{"jwt:bl:access-jti", "jwt:bl:refresh-jti"} {
+		exists, err := rdb.Exists(req.Context(), key).Result()
+		if err != nil {
+			t.Fatalf("check blacklist key %q: %v", key, err)
+		}
+		if exists != 1 {
+			t.Fatalf("expected blacklist key %q to exist", key)
+		}
 	}
 }
 

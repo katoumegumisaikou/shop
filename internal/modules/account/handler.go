@@ -9,20 +9,41 @@ import (
 	"shop/internal/pkg/errs"
 	pkgjwt "shop/internal/pkg/jwt"
 	"shop/internal/pkg/response"
+	"shop/internal/pkg/utils"
+)
+
+const (
+	accessTokenCookieName  = "access_token"
+	refreshTokenCookieName = "refresh_token"
+	accessTokenCookiePath  = "/"
+	refreshTokenCookiePath = "/api/v1/c/auth"
 )
 
 // Handler 账号模块 HTTP 处理器。
 type Handler struct {
 	svc                 *Service
-	jwtCfg              pkgjwt.JwtConfig
+	userJwtCfg          pkgjwt.JwtConfig
+	adminJwtCfg         pkgjwt.JwtConfig
 	isProd              bool
 	h5RedirectAllowList []string // 完整 URL 白名单，H5Callback state 跳转允许名单
 }
 
 // NewHandler 构造 Handler。
 // h5RedirectAllowList：完整 URL 列表，可为 nil/空，为空时 H5Callback 仅允许 state 是以 "/" 开头的同源相对路径。
-func NewHandler(svc *Service, jwtCfg pkgjwt.JwtConfig, isProd bool, h5RedirectAllowList []string) *Handler {
-	return &Handler{svc: svc, jwtCfg: jwtCfg, isProd: isProd, h5RedirectAllowList: h5RedirectAllowList}
+func NewHandler(
+	svc *Service,
+	userJwtCfg pkgjwt.JwtConfig,
+	adminJwtCfg pkgjwt.JwtConfig,
+	isProd bool,
+	h5RedirectAllowList []string,
+) *Handler {
+	return &Handler{
+		svc:                 svc,
+		userJwtCfg:          userJwtCfg,
+		adminJwtCfg:         adminJwtCfg,
+		isProd:              isProd,
+		h5RedirectAllowList: h5RedirectAllowList,
+	}
 }
 
 func (h *Handler) MpLogin(c *gin.Context) {
@@ -68,27 +89,27 @@ func (h *Handler) H5Callback(c *gin.Context) {
 		return
 	}
 
-	refreshMaxAge := int(h.jwtCfg.RefreshExpiration.Seconds())
+	refreshMaxAge := int(h.userJwtCfg.RefreshExpiration.Seconds())
 	if refreshMaxAge <= 0 {
 		refreshMaxAge = int(result.ExpiresIn)
 	}
 
 	// access_token 设为 HttpOnly + Secure cookie，禁止 JS 读取
 	c.SetCookie(
-		"access_token",
+		accessTokenCookieName,
 		result.AccessToken,
 		int(result.ExpiresIn),
-		"/",
+		accessTokenCookiePath,
 		"",       // domain 由 nginx 注入，此处留空
 		h.isProd, // secure（HTTPS only）
 		true,     // httpOnly
 	)
 	// refresh_token 同样走 cookie
 	c.SetCookie(
-		"refresh_token",
+		refreshTokenCookieName,
 		result.RefreshToken,
 		refreshMaxAge,
-		"/api/v1/c/auth/refresh",
+		refreshTokenCookiePath,
 		"",
 		h.isProd,
 		true,
@@ -146,4 +167,67 @@ func (h *Handler) BindPhone(c *gin.Context) {
 	}
 	response.OK(c, nil)
 
+}
+
+// refresh 刷新token
+func (h *Handler) RefreshToken(c *gin.Context) {
+	var req RefreshTokenReq
+	err := c.ShouldBind(&req)
+	if err != nil {
+		// 尝试从cookie中取出
+		var ok bool
+		req.RefreshToken, ok = utils.GetJWTTokenFromCtx(c, refreshTokenCookieName)
+		if !ok {
+			response.Error(c, errs.ErrUnauth)
+			return
+		}
+	}
+
+	result, err := h.svc.RefreshToken(c.Request.Context(), req.RefreshToken)
+	if err != nil {
+		response.Error(c, errs.ErrUnauth)
+		return
+	}
+
+	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.ExpiresIn), accessTokenCookiePath, "", h.isProd, true)
+	refreshMaxAge := int(h.userJwtCfg.RefreshExpiration.Seconds())
+	if refreshMaxAge <= 0 {
+		refreshMaxAge = int(result.ExpiresIn)
+	}
+	c.SetCookie(refreshTokenCookieName, result.RefreshToken, refreshMaxAge, refreshTokenCookiePath, "", h.isProd, true)
+	response.OK(c, gin.H{
+		"access_token": result.AccessToken,
+		"expires_in":   result.ExpiresIn,
+	})
+}
+
+func (h *Handler) Logout(c *gin.Context) {
+	accessToken, ok := utils.GetJWTTokenFromCtx(c, accessTokenCookieName)
+	if !ok {
+		response.Error(c, errs.ErrUnauth)
+		return
+	}
+
+	refreshToken, _ := getCookieToken(c, refreshTokenCookieName)
+	if err := h.svc.Logout(c.Request.Context(), accessToken, refreshToken); err != nil {
+		response.Error(c, err)
+		return
+	}
+	// 清除 cookie
+	c.SetCookie(accessTokenCookieName, "", -1, accessTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(refreshTokenCookieName, "", -1, refreshTokenCookiePath, "", h.isProd, true)
+
+	response.OK(c, nil)
+}
+
+func getCookieToken(c *gin.Context, name string) (string, bool) {
+	token, err := c.Cookie(name)
+	if err != nil {
+		return "", false
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", false
+	}
+	return token, true
 }

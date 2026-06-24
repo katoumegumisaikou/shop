@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 
 	"shop/internal/pkg/errs"
@@ -251,4 +252,55 @@ func TestH5CallbackSuccessUsesOpenidH5(t *testing.T) {
 	if claims.Sub != repo.h5Found.ID {
 		t.Fatalf("expected token subject %d, got %d", repo.h5Found.ID, claims.Sub)
 	}
+}
+
+func TestLogoutBlacklistsAccessAndRefreshTokens(t *testing.T) {
+	ctx := context.Background()
+	pkgjwt.InitJwtConfig(pkgjwt.JwtConfig{
+		JwtSecret:         "test-secret",
+		Expiration:        time.Hour,
+		RefreshExpiration: 24 * time.Hour,
+	}, pkgjwt.JwtConfig{})
+
+	redisServer := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() {
+		_ = rdb.Close()
+	})
+
+	svc := NewService(nil, rdb, nil, nil)
+	accessToken := signTestUserToken(t, "test-secret", 1001, "access-jti", time.Now().Add(time.Hour))
+	refreshToken := signTestUserToken(t, "test-secret", 1001, "refresh-jti", time.Now().Add(24*time.Hour))
+
+	if err := svc.Logout(ctx, accessToken, refreshToken); err != nil {
+		t.Fatalf("Logout returned error: %v", err)
+	}
+
+	for _, key := range []string{"jwt:bl:access-jti", "jwt:bl:refresh-jti"} {
+		exists, err := rdb.Exists(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("check blacklist key %q: %v", key, err)
+		}
+		if exists != 1 {
+			t.Fatalf("expected blacklist key %q to exist", key)
+		}
+	}
+}
+
+func signTestUserToken(t *testing.T, secret string, userID int64, jti string, expiresAt time.Time) string {
+	t.Helper()
+
+	token, err := pkgjwt.Sign(secret, pkgjwt.Claims{
+		Sub:  userID,
+		Type: "user",
+		JTI:  jti,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	})
+	if err != nil {
+		t.Fatalf("sign test token: %v", err)
+	}
+	return token
 }
