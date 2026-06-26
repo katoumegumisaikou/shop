@@ -9,6 +9,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/go-redis/redis_rate/v10"
+
+	"shop/internal/middleware"
 	"shop/internal/pkg/errs"
 	pkgjwt "shop/internal/pkg/jwt"
 	"shop/internal/pkg/snowflake"
@@ -19,8 +22,6 @@ import (
 const (
 	// sessionKeyTTL 微信 session_key 缓存时长（2 小时）。
 	sessionKeyTTL = 2 * time.Hour
-	// smsRateTTL 短信发送频率限制（60 秒内最多 1 次）。
-	smsRateTTL = 60 * time.Second
 	// smsCodeTTL 短信验证码有效期（5 分钟）。
 	smsCodeTTL = 5 * time.Minute
 )
@@ -29,6 +30,7 @@ const (
 type Service struct {
 	userRepo UserRepo
 	rdb      *redis.Client
+	limiter  *redis_rate.Limiter
 	userCfg  pkgjwt.JwtConfig
 	adminCfg pkgjwt.JwtConfig
 	wxMP     wxlogin.WxLoginClient // 小程序
@@ -45,6 +47,7 @@ func NewService(
 	return &Service{
 		userRepo: userRepo,
 		rdb:      rdb,
+		limiter:  redis_rate.NewLimiter(rdb),
 		userCfg:  pkgjwt.GetUserConfig(),
 		adminCfg: pkgjwt.GetAdminConfig(),
 		wxMP:     wxMP,
@@ -406,14 +409,10 @@ func (s *Service) SendSmsCode(ctx context.Context, phone, purpose string) (strin
 		return "", err
 	}
 
-	// 速率限制
+	// 速率限制：每分钟同一手机号+目的仅允许 1 次
 	rateKey := fmt.Sprintf("shop:sms:rate:%s:%s", purpose, phone)
-	ok, err := s.rdb.SetNX(ctx, rateKey, "1", smsRateTTL).Result()
-	if err != nil {
-		return "", errs.ErrInternal
-	}
-	if !ok {
-		return "", errs.ErrRateLimit.WithMsg("发送过于频繁，请 60 秒后重试")
+	if err := middleware.RateLimiter(ctx, s.limiter, rateKey, redis_rate.PerMinute(1)); err != nil {
+		return "", err
 	}
 
 	// 生成随机数
