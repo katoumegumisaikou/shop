@@ -17,9 +17,6 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, rdb *redis.Client, db *gorm.
 	userLimiter := middleware.UserRateLimiter(rdb)
 	ipLimiter := middleware.IPRateLimiter(rdb)
 
-	// 验证码限流
-	captchaLimiter := middleware.CaptchaRateLimiter(rdb)
-
 	r.Use(ipLimiter)
 
 	// C 端路由
@@ -27,7 +24,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, rdb *redis.Client, db *gorm.
 	{
 		auth := c.Group("/auth")
 		auth.POST("/mp/login", h.MpLogin)
-		auth.POST("/sms/code", captchaLimiter, h.SendSmsCode)
+		auth.POST("/sms/code", h.SendSmsCode)
 		auth.GET("/h5/code", h.H5GetOAuthURL)
 		auth.GET("/h5/callback", h.H5Callback)
 		// sensitive 必须在 userAuth 之前，否则 auth 中间件读取 sensitive flag 时仍为 false

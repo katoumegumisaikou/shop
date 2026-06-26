@@ -17,11 +17,11 @@ const (
 	ipPerMinuteRequest = 10
 	// userPerMinuteRequest 每个已登录用户每分钟允许的请求数，用于敏感操作（如绑定手机、登出）。
 	userPerMinuteRequest = 10
-	// captchaPerMinuteRequest 每个 IP 每分钟允许的验证码请求数，用于 CaptchaRateLimiter 防止短信轰炸。
-	captchaPerMinuteRequest = 1
+	// captchaPerMinuteRequest 每个 IP 每分钟允许的验证码请求数，用于 CaptchaRateLimiter 限制 admin 登录验证码频率。
+	captchaPerMinuteRequest = 3
 )
 
-func rateLimiter(ctx context.Context, limiter *redis_rate.Limiter, key string, limit redis_rate.Limit) error {
+func RateLimiter(ctx context.Context, limiter *redis_rate.Limiter, key string, limit redis_rate.Limit) error {
 	result, err := limiter.Allow(ctx, key, limit)
 	if err != nil {
 		return errs.ErrServiceDegraded
@@ -36,7 +36,7 @@ func IPRateLimiter(client *redis.Client) gin.HandlerFunc {
 	limiter := redis_rate.NewLimiter(client)
 	return func(c *gin.Context) {
 		ipKey := fmt.Sprintf("shop:rl:api:%s:%s", c.FullPath(), c.ClientIP())
-		err := rateLimiter(c.Request.Context(), limiter, ipKey, redis_rate.PerMinute(ipPerMinuteRequest))
+		err := RateLimiter(c.Request.Context(), limiter, ipKey, redis_rate.PerMinute(ipPerMinuteRequest))
 		if err != nil {
 			response.Error(c, err)
 			return
@@ -55,7 +55,7 @@ func UserRateLimiter(client *redis.Client) gin.HandlerFunc {
 			return
 		}
 		userKey := fmt.Sprintf("shop:rl:user:%s:%d", c.FullPath(), userID)
-		err := rateLimiter(c.Request.Context(), limiter, userKey, redis_rate.PerMinute(userPerMinuteRequest))
+		err := RateLimiter(c.Request.Context(), limiter, userKey, redis_rate.PerMinute(userPerMinuteRequest))
 		if err != nil {
 			response.Error(c, err)
 			return
@@ -68,7 +68,7 @@ func CaptchaRateLimiter(client *redis.Client) gin.HandlerFunc {
 	limiter := redis_rate.NewLimiter(client)
 	return func(c *gin.Context) {
 		captchaKey := fmt.Sprintf("shop:rl:captcha:ip:%s", c.ClientIP())
-		err := rateLimiter(c.Request.Context(), limiter, captchaKey, redis_rate.PerMinute(captchaPerMinuteRequest))
+		err := RateLimiter(c.Request.Context(), limiter, captchaKey, redis_rate.PerMinute(captchaPerMinuteRequest))
 		if err != nil {
 			response.Error(c, err)
 			return
