@@ -247,6 +247,7 @@ func (h *Handler) SendSmsCode(c *gin.Context) {
 		return
 	}
 
+	// 目前没有接入短信平台，先凑合着用吧
 	response.OK(c, SmsResp{
 		Code:      code,
 		ExpiresIn: int64(smsCodeTTL.Seconds()),
