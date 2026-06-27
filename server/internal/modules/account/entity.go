@@ -5,19 +5,19 @@ import "time"
 
 // User C 端用户表。
 type User struct {
-	ID              int64      `gorm:"primaryKey"`                   // 主键
-	OpenidMP        *string    `gorm:"column:openid_mp;uniqueIndex"` // 小程序id
-	OpenidH5        *string    `gorm:"column:openid_h5;uniqueIndex"` // 公众号id
-	Unionid         *string    `gorm:"column:unionid;uniqueIndex"`   // 微信开放平台统一ID
-	Phone           *string    `gorm:"column:phone;uniqueIndex"`
-	PhoneCountry    string     `gorm:"column:phone_country;default:86"`
-	PasswordHash    *string    `gorm:"column:password_hash"`
-	Source          string     `gorm:"column:source;default:mp"` // 用户登录平台
-	NickName        *string    `gorm:"column:nickname"`          // 昵称
-	Avatar          *string    `gorm:"column:avatar"`
+	ID              int64      `gorm:"primaryKey"`                       // 主键
+	OpenidMP        *string    `gorm:"column:openid_mp;uniqueIndex;size:64"`  // 小程序id
+	OpenidH5        *string    `gorm:"column:openid_h5;uniqueIndex;size:64"`  // 公众号id
+	Unionid         *string    `gorm:"column:unionid;uniqueIndex;size:64"`    // 微信开放平台统一ID
+	Phone           *string    `gorm:"column:phone;uniqueIndex;size:20"`
+	PhoneCountry    string     `gorm:"column:phone_country;default:86;size:5"`
+	PasswordHash    *string    `gorm:"column:password_hash;size:255"`
+	Source          string     `gorm:"column:source;default:mp;size:10"` // 用户登录平台
+	NickName        *string    `gorm:"column:nickname;size:50"`          // 昵称
+	Avatar          *string    `gorm:"column:avatar;size:256"`
 	Gender          int        `gorm:"column:gender;default:0"`
 	Birthday        *time.Time `gorm:"column:birthday"`
-	Status          string     `gorm:"column:status;default:active"`
+	Status          string     `gorm:"column:status;default:active;size:20"`
 	DeactivateAt    *time.Time `gorm:"column:deactivate_at"`      // 软注销
 	InvitedByUserID *int64     `gorm:"column:invited_by_user_id"` // 邀请人
 	DistributorID   *int64     `gorm:"column:distributor_id"`     // 分销员id
