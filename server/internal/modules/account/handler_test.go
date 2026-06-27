@@ -171,7 +171,7 @@ func TestSendSmsCodeHTTPReturnsCode(t *testing.T) {
 		t.Fatalf("expected expires_in %d, got %d", int64(smsCodeTTL.Seconds()), body.Data.ExpiresIn)
 	}
 
-	storedCode, err := rdb.Get(req.Context(), "shop:sms:code:register:13800138000").Result()
+	storedCode, err := rdb.Get(req.Context(), "shop:code:register:13800138000").Result()
 	if err != nil {
 		t.Fatalf("expected stored sms code: %v", err)
 	}

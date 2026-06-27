@@ -3,11 +3,13 @@ package account
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/go-redis/redis_rate/v10"
 
@@ -384,6 +386,10 @@ func (s *Service) parseUserToken(token string) (*pkgjwt.Claims, error) {
 	return claims, nil
 }
 
+// blacklistTokenClaims 将 JWT 加入 Redis 黑名单，使其在剩余有效期内不可用。
+//
+// 黑名单 key 为 jwt:bl:{jti}，TTL 为 token 剩余有效期，到期自动释放。
+// 登出或 refresh token 一次性使用时会调用此函数。
 func (s *Service) blacklistTokenClaims(ctx context.Context, claims *pkgjwt.Claims) error {
 	if claims == nil || claims.JTI == "" || claims.ExpiresAt == nil {
 		return errs.ErrUnauth
@@ -422,11 +428,176 @@ func (s *Service) SendSmsCode(ctx context.Context, phone, purpose string) (strin
 		return "", errs.ErrInternal
 	}
 
-	codeKey := fmt.Sprintf("shop:sms:code:%s:%s", purpose, phone)
+	codeKey := fmt.Sprintf("shop:code:%s:%s", purpose, phone)
 	_, err = s.rdb.Set(ctx, codeKey, code, smsCodeTTL).Result()
 	if err != nil {
 		_ = s.rdb.Del(ctx, rateKey).Err()
 		return "", errs.ErrInternal
 	}
 	return code, nil
+}
+
+// RegisterByPhone 注册新用户。
+//
+// 验证验证码和密码强度后创建用户并签发 token。
+func (s *Service) RegisterByPhone(ctx context.Context, phone, password, code string) (*MpLoginResult, error) {
+	if err := s.checkUserTokenDependencies(); err != nil {
+		return nil, err
+	}
+	// 检验验证码
+	if isExist, err := s.verifySmsCode(ctx, phone, code, "register"); err != nil || !isExist {
+		return nil, err
+	}
+	_, _ = s.rdb.Del(ctx, fmt.Sprintf("shop:code:%s:%s", "register", phone)).Result()
+
+	// 验证密码强度
+	if err := validatePassword(password); err != nil {
+		return nil, err
+	}
+
+	// 确认手机号未被使用
+	cnt, err := s.userRepo.CountByPhone(ctx, phone)
+	if err != nil {
+		return nil, err
+	} else if cnt > 0 {
+		return nil, errs.ErrConflict.WithMsg("手机号已经被使用")
+	}
+
+	// 哈希加密密钥
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return nil, errs.ErrInternal
+	}
+	hashStr := string(hash)
+
+	nickName := "用户" + phone
+	u := &User{
+		ID:           snowflake.NextID(),
+		Phone:        &phone,
+		NickName:     &nickName,
+		PasswordHash: &hashStr,
+		Status:       "active",
+		Source:       "phone",
+	}
+	if err := s.userRepo.Create(ctx, u); err != nil {
+		return nil, err
+	}
+	return s.signUserToken(u.ID)
+}
+
+// ResetPassword 重置密码。
+//
+// 验证验证码和密码强度后更新密码并签发 token。
+func (s *Service) ResetPassword(ctx context.Context, phone, password, code, accessToken, refreshToken string) (*MpLoginResult, error) {
+	if err := s.checkUserTokenDependencies(); err != nil {
+		return nil, err
+	}
+
+	// 检验验证码
+	if isExist, err := s.verifySmsCode(ctx, phone, code, "reset"); err != nil || !isExist {
+		return nil, err
+	}
+	_, _ = s.rdb.Del(ctx, fmt.Sprintf("shop:code:%s:%s", "reset", phone)).Result()
+
+	// 验证密码强度
+	if err := validatePassword(password); err != nil {
+		return nil, err
+	}
+
+	// 确认账号存在并获取用户信息
+	user, err := s.userRepo.FindByPhone(ctx, phone)
+	if err != nil {
+		return nil, errs.ErrNotFound.WithMsg("账号不存在，无法重置密码")
+	}
+
+	// 哈希加密密钥
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return nil, errs.ErrInternal
+	}
+	hashStr := string(hash)
+
+	// 修改密码
+	if err := s.userRepo.Update(ctx, user.ID, map[string]any{
+		"password_hash": hashStr,
+	}); err != nil {
+		return nil, errs.ErrInternal.WithMsg("修改密码失败")
+	}
+
+	// 将之前token加入黑名单
+	accessClaims, err := pkgjwt.Parse(s.userCfg.JwtSecret, accessToken)
+	if err != nil {
+		return nil, err
+	}
+	refreshClaims, err := pkgjwt.Parse(s.userCfg.JwtSecret, refreshToken)
+	if err != nil {
+		return nil, err
+	}
+
+	_ = s.blacklistTokenClaims(ctx, accessClaims)
+	_ = s.blacklistTokenClaims(ctx, refreshClaims)
+
+	return s.signUserToken(user.ID)
+}
+
+// 允许的密码特殊符号（键盘上可见的符号）
+const passwordSymbols = "!#$%&'()*+-=`{|}~"
+
+// validatePassword 校验密码强度。
+//
+//   - 至少 6 位
+//   - 包含大写字母、小写字母、数字、符号中至少 2 类
+func validatePassword(password string) error {
+	if len(password) < 6 {
+		return errs.ErrParam.WithMsg("密码至少 6 位")
+	}
+
+	var hasUpper, hasLower, hasDigit, hasSymbol bool
+	for _, ch := range password {
+		switch {
+		case 'A' <= ch && ch <= 'Z':
+			hasUpper = true
+		case 'a' <= ch && ch <= 'z':
+			hasLower = true
+		case '0' <= ch && ch <= '9':
+			hasDigit = true
+		case strings.ContainsRune(passwordSymbols, ch):
+			hasSymbol = true
+		default:
+			// 不允许的字符（中文、emoji、控制字符等），视为非法
+			return errs.ErrParam.WithMsg("密码包含不允许的特殊字符")
+		}
+	}
+
+	categories := 0
+	if hasUpper {
+		categories++
+	}
+	if hasLower {
+		categories++
+	}
+	if hasDigit {
+		categories++
+	}
+	if hasSymbol {
+		categories++
+	}
+	if categories < 2 {
+		return errs.ErrParam.WithMsg("密码需包含大写字母、小写字母、数字、特殊字符中至少 2 类")
+	}
+	return nil
+}
+
+func (s *Service) verifySmsCode(ctx context.Context, phone, code, purpose string) (bool, error) {
+	key := fmt.Sprintf("shop:code:%s:%s", purpose, phone)
+	redisCode, err := s.rdb.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return false, errs.ErrRateLimit.WithMsg("验证码已过期")
+	} else if err != nil {
+		return false, errs.ErrInternal
+	}
+	if redisCode == code {
+		return true, nil
+	}
+	return false, nil
 }

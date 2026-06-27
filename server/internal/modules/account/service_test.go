@@ -23,6 +23,8 @@ type mockUserRepo struct {
 	h5Found                      *User
 	countActiveByPhoneExclude    int64
 	countActiveByPhoneExcludeErr error
+	countByPhone                 int64
+	countByPhoneErr              error
 	updatedID                    int64
 	updates                      map[string]any
 	updateErr                    error
@@ -54,6 +56,25 @@ func (m *mockUserRepo) UpsertByOpenidH5(_ context.Context, user *User) error {
 
 func (m *mockUserRepo) CountActiveByPhoneExclude(_ context.Context, _ string, _ int64) (int64, error) {
 	return m.countActiveByPhoneExclude, m.countActiveByPhoneExcludeErr
+}
+
+func (m *mockUserRepo) FindByPhone(_ context.Context, phone string) (*User, error) {
+	if m.found != nil && m.found.Phone != nil && *m.found.Phone == phone {
+		return m.found, nil
+	}
+	return nil, nil
+}
+
+func (m *mockUserRepo) Create(_ context.Context, _ *User) error {
+	return nil
+}
+
+func (m *mockUserRepo) UpsertByPhone(_ context.Context, _ *User) error {
+	return nil
+}
+
+func (m *mockUserRepo) CountByPhone(_ context.Context, _ string) (int64, error) {
+	return m.countByPhone, m.countByPhoneErr
 }
 
 func (m *mockUserRepo) Update(_ context.Context, id int64, updates map[string]any) error {
@@ -304,7 +325,7 @@ func TestSendSmsCodeStoresCodeAndRateLimits(t *testing.T) {
 		t.Fatalf("expected 6 digit code, got %q", code)
 	}
 
-	storedCode, err := rdb.Get(ctx, "shop:sms:code:register:13800138000").Result()
+	storedCode, err := rdb.Get(ctx, "shop:code:register:13800138000").Result()
 	if err != nil {
 		t.Fatalf("expected stored sms code: %v", err)
 	}

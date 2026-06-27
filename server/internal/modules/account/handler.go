@@ -190,11 +190,7 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 	}
 
 	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.ExpiresIn), accessTokenCookiePath, "", h.isProd, true)
-	refreshMaxAge := int(h.userJwtCfg.RefreshExpiration.Seconds())
-	if refreshMaxAge <= 0 {
-		refreshMaxAge = int(result.ExpiresIn)
-	}
-	c.SetCookie(refreshTokenCookieName, result.RefreshToken, refreshMaxAge, refreshTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.ExpiresIn)*3, refreshTokenCookiePath, "", h.isProd, true)
 	response.OK(c, gin.H{
 		"access_token": result.AccessToken,
 		"expires_in":   result.ExpiresIn,
@@ -252,4 +248,42 @@ func (h *Handler) SendSmsCode(c *gin.Context) {
 		Code:      code,
 		ExpiresIn: int64(smsCodeTTL.Seconds()),
 	})
+}
+
+func (h *Handler) RegisterByPhone(c *gin.Context) {
+	var req PhoneRegisterReq
+	if err := c.ShouldBind(&req); err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	result, err := h.svc.RegisterByPhone(c.Request.Context(), req.Phone, req.Password, req.Code)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.ExpiresIn), accessTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.ExpiresIn)*3, refreshTokenCookiePath, "", h.isProd, true)
+	response.OK(c, nil)
+}
+
+func (h *Handler) ResetPassword(c *gin.Context) {
+	var req ResetPasswordReq
+	if err := c.ShouldBind(&req); err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+
+	accessToken, _ := utils.GetJWTTokenFromCtx(c, accessTokenCookieName)
+	refreshToken, _ := getCookieToken(c, refreshTokenCookieName)
+
+	result, err := h.svc.ResetPassword(c.Request.Context(), req.Phone, req.Password, req.Code, accessToken, refreshToken)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.ExpiresIn), accessTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.ExpiresIn)*3, refreshTokenCookiePath, "", h.isProd, true)
+	response.OK(c, nil)
 }

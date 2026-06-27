@@ -50,3 +50,17 @@ type SmsResp struct {
 	Code      string `json:"code"`       // 开发期通过 HTTP 返回的验证码
 	ExpiresIn int64  `json:"expires_in"` // 验证码有效期，单位秒
 }
+
+// PhoneRegisterReq 手机号注册请求。
+type PhoneRegisterReq struct {
+	Phone    string `json:"phone"    binding:"required,mobile"`
+	Code     string `json:"code"     binding:"required,len=6"`
+	Password string `json:"password" binding:"required"`
+}
+
+// ResetPasswordReq 重置密码请求。
+type ResetPasswordReq struct {
+	Phone    string `json:"phone"    binding:"required,mobile"`
+	Code     string `json:"code"     binding:"required,len=6"`
+	Password string `json:"password" binding:"required"`
+}
