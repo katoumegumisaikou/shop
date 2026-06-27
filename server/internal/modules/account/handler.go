@@ -190,7 +190,7 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 	}
 
 	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.ExpiresIn), accessTokenCookiePath, "", h.isProd, true)
-	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.ExpiresIn)*3, refreshTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), refreshTokenCookiePath, "", h.isProd, true)
 	response.OK(c, gin.H{
 		"access_token": result.AccessToken,
 		"expires_in":   result.ExpiresIn,
@@ -263,7 +263,7 @@ func (h *Handler) RegisterByPhone(c *gin.Context) {
 	}
 
 	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.ExpiresIn), accessTokenCookiePath, "", h.isProd, true)
-	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.ExpiresIn)*3, refreshTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), refreshTokenCookiePath, "", h.isProd, true)
 	response.OK(c, nil)
 }
 
@@ -284,6 +284,24 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 	}
 
 	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.ExpiresIn), accessTokenCookiePath, "", h.isProd, true)
-	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.ExpiresIn)*3, refreshTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), refreshTokenCookiePath, "", h.isProd, true)
 	response.OK(c, nil)
+}
+
+func (h *Handler) PhoneLogin(c *gin.Context) {
+	var req PhoneLoginReq
+	if err := c.ShouldBind(&req); err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+
+	result, err := h.svc.PhoneLogin(c.Request.Context(), &req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.AccessExpiresIn), accessTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), refreshTokenCookiePath, "", h.isProd, true)
+	response.OK(c, result)
 }

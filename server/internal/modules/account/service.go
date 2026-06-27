@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"shop/internal/pkg/errs"
 	pkgjwt "shop/internal/pkg/jwt"
 	"shop/internal/pkg/snowflake"
+	"shop/internal/pkg/types"
 	"shop/internal/pkg/utils"
 	"shop/internal/pkg/wxlogin"
 )
@@ -26,6 +28,12 @@ const (
 	sessionKeyTTL = 2 * time.Hour
 	// smsCodeTTL 短信验证码有效期（5 分钟）。
 	smsCodeTTL = 5 * time.Minute
+	// loginFailTTL 登录失败时间。
+	loginFailTTL = 5 * time.Minute
+	// loginFailLockTTL 登录失败锁定时间
+	loginFailLockTTL = 5 * time.Minute
+	// loginFailThreshold 登录失败最大次数，超过后触发锁定。
+	loginFailThreshold = 4
 )
 
 // Service 账号服务。
@@ -161,12 +169,13 @@ func (s *Service) checkSmsCodeDependencies() error {
 	return nil
 }
 
-// MpLoginResult 小程序登录结果。
+// MpLoginResult 登录结果。
 type MpLoginResult struct {
-	AccessToken  string
-	RefreshToken string
-	UserID       int64
-	ExpiresIn    int64
+	AccessToken      string
+	RefreshToken     string
+	UserID           int64
+	ExpiresIn        int64 // access_token 剩余有效期，单位秒
+	RefreshExpiresIn int64 // refresh_token 剩余有效期，单位秒
 }
 
 // MpLogin 小程序登录（code2session → upsert → 签发 JWT）。
@@ -248,10 +257,11 @@ func (s *Service) signUserToken(id int64) (*MpLoginResult, error) {
 		return nil, err
 	}
 	return &MpLoginResult{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		UserID:       id,
-		ExpiresIn:    int64(s.userCfg.Expiration.Seconds()),
+		AccessToken:      accessToken,
+		RefreshToken:     refreshToken,
+		UserID:           id,
+		ExpiresIn:        int64(s.userCfg.Expiration.Seconds()),
+		RefreshExpiresIn: int64(s.userCfg.RefreshExpiration.Seconds()),
 	}, nil
 }
 
@@ -600,4 +610,81 @@ func (s *Service) verifySmsCode(ctx context.Context, phone, code, purpose string
 		return true, nil
 	}
 	return false, nil
+}
+
+func (s *Service) PhoneLogin(ctx context.Context, req *PhoneLoginReq) (*PhoneLoginResp, error) {
+	// 查看用户是否被锁定
+	lockKey := fmt.Sprintf("shop:lock:%s", req.Phone)
+	exists, err := s.rdb.Exists(ctx, lockKey).Result()
+	if err != nil {
+		return nil, err
+	} else if exists == 1 {
+		return nil, errs.ErrAccountLocked
+	}
+
+	// 查找用户
+	u, err := s.userRepo.FindByPhone(ctx, req.Phone)
+	if err != nil {
+		return nil, errs.ErrParam.WithMsg("密码或账号错误")
+	} else if u.Status != "active" {
+		return nil, errs.ErrAccountLocked
+	}
+
+	// 检验用户密码
+	if u.PasswordHash == nil {
+		return nil, errs.ErrParam.WithMsg("用户未设置密码，请尝试其他方式登录")
+	}
+	err = bcrypt.CompareHashAndPassword([]byte(*u.PasswordHash), []byte(req.Password))
+	if err != nil {
+		s.incLoginFail(ctx, req.Phone)
+		return nil, errs.ErrParam.WithMsg("密码或账号错误")
+	}
+
+	// 清空登录失败次数
+	failKey := fmt.Sprintf("shop:fail:%s", req.Phone)
+	_ = s.rdb.Del(ctx, failKey)
+
+	r, err := s.signUserToken(u.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &PhoneLoginResp{
+		AccessToken:      r.AccessToken,
+		RefreshToken:     r.RefreshToken,
+		AccessExpiresIn:  r.ExpiresIn,
+		RefreshExpiresIn: r.RefreshExpiresIn,
+		User: &UserResp{
+			ID:       types.Int64Str(u.ID),
+			Phone:    u.Phone,
+			Nickname: u.NickName,
+			Avatar:   u.Avatar,
+			Status:   u.Status,
+		},
+	}
+	return result, nil
+
+}
+
+// incLoginFail 增加登录失败计数，超限则锁定，实现指数退避
+func (s *Service) incLoginFail(ctx context.Context, phone string) error {
+	failKey := fmt.Sprintf("shop:fail:%s", phone)
+	pipe := s.rdb.Pipeline()
+	incrCmd := pipe.Incr(ctx, failKey)
+	_ = pipe.Expire(ctx, failKey, loginFailTTL)
+	_, _ = pipe.Exec(ctx)
+	cnt := incrCmd.Val()
+
+	// 按阶段锁定：达到阈值时锁定，每多一个阈值阶段指数递增
+	if cnt >= loginFailThreshold {
+		stage := cnt / loginFailThreshold
+		lockTTL := time.Duration(math.Pow(2, float64(stage-1)) * float64(loginFailLockTTL))
+		lockKey := fmt.Sprintf("shop:lock:%s", phone)
+		if err := s.rdb.Set(ctx, lockKey, 1, lockTTL).Err(); err != nil {
+			return err
+		}
+		// 延长失败计数 TTL，与锁定时间一致，避免解锁后仍残留旧计数
+		_, _ = s.rdb.Expire(ctx, failKey, lockTTL).Result()
+	}
+	return nil
 }

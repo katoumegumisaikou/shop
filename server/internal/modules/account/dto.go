@@ -1,5 +1,8 @@
 package account
 
+import "time"
+import "shop/internal/pkg/types"
+
 // MpLoginRequest 是小程序登录请求体。
 type MpLoginRequest struct {
 	Code string `json:"code" binding:"required"` // wx.login 返回的临时 code
@@ -7,11 +10,12 @@ type MpLoginRequest struct {
 
 // MpLoginResponse 是小程序登录响应体。
 type MpLoginResponse struct {
-	AccessToken  string `json:"access_token"`  // 访问接口使用的短期 token
-	RefreshToken string `json:"refresh_token"` // 刷新 access token 使用的长期 token
-	TokenType    string `json:"token_type"`    // token 类型，固定为 Bearer
-	ExpiresIn    int64  `json:"expires_in"`    // access token 剩余有效期，单位秒
-	UserID       int64  `json:"user_id"`       // 当前登录用户 ID
+	AccessToken      string `json:"access_token"`       // 访问接口使用的短期 token
+	RefreshToken     string `json:"refresh_token"`      // 刷新 access token 使用的长期 token
+	TokenType        string `json:"token_type"`         // token 类型，固定为 Bearer
+	AccessExpiresIn  int64  `json:"expires_in"`         // access token 剩余有效期，单位秒
+	RefreshExpiresIn int64  `json:"refresh_expires_in"` // refresh token 剩余有效期，单位秒
+	UserID           int64  `json:"user_id"`            // 当前登录用户 ID
 }
 
 // ToMpLoginResponse 把领域层登录结果转换为 HTTP 响应 DTO。
@@ -20,11 +24,11 @@ func ToMpLoginResponse(result *MpLoginResult) MpLoginResponse {
 		return MpLoginResponse{}
 	}
 	return MpLoginResponse{
-		AccessToken:  result.AccessToken,
-		RefreshToken: result.RefreshToken,
-		TokenType:    "Bearer",
-		ExpiresIn:    result.ExpiresIn,
-		UserID:       result.UserID,
+		AccessToken:     result.AccessToken,
+		RefreshToken:    result.RefreshToken,
+		TokenType:       "Bearer",
+		AccessExpiresIn: result.ExpiresIn,
+		UserID:          result.UserID,
 	}
 }
 
@@ -63,4 +67,32 @@ type ResetPasswordReq struct {
 	Phone    string `json:"phone"    binding:"required,mobile"`
 	Code     string `json:"code"     binding:"required,len=6"`
 	Password string `json:"password" binding:"required"`
+}
+
+// PhoneLoginReq 手机号密码登录请求。
+type PhoneLoginReq struct {
+	Phone    string `json:"phone"    binding:"required,mobile"`
+	Password string `json:"password" binding:"required"`
+}
+
+// PhoneLoginResp C 端手机号登录/注册响应。
+type PhoneLoginResp struct {
+	AccessToken      string    `json:"access_token"`
+	RefreshToken     string    `json:"refresh_token"`
+	AccessExpiresIn  int64     `json:"expires_in"`         // access token 剩余有效期，单位秒
+	RefreshExpiresIn int64     `json:"refresh_expires_in"` // refresh token 剩余有效期，单位秒
+	User             *UserResp `json:"user"`
+}
+
+// UserResp 用户信息响应。
+type UserResp struct {
+	ID           types.Int64Str `json:"id"`
+	Phone        *string        `json:"phone,omitempty"`
+	Nickname     *string        `json:"nickname,omitempty"`
+	Avatar       *string        `json:"avatar,omitempty"`
+	Gender       int            `json:"gender"`
+	Birthday     *time.Time     `json:"birthday,omitempty"`
+	Status       string         `json:"status"`
+	BalanceCents int64          `json:"balance_cents"`
+	CreatedAt    time.Time      `json:"created_at"`
 }

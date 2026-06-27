@@ -33,5 +33,6 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, rdb *redis.Client, db *gorm.
 		auth.POST("/logout", sensitive, userAuth, userLimiter, h.Logout)
 		auth.POST("/phone-register", h.RegisterByPhone)
 		auth.POST("/reset-password", userAuth, h.ResetPassword)
+		auth.POST("/phone-login", h.PhoneLogin)
 	}
 }
