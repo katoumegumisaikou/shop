@@ -22,10 +22,9 @@ const (
 )
 
 func RateLimiter(ctx context.Context, limiter *redis_rate.Limiter, key string, limit redis_rate.Limit) error {
-	result, err := limiter.Allow(ctx, key, limit)
-	if err != nil {
-		return errs.ErrServiceDegraded
-	} else if result.Allowed < 1 {
+	// 这里redis宕机时放行请求
+	result, _ := limiter.Allow(ctx, key, limit)
+	if result.Allowed < 1 {
 		msg := fmt.Sprintf("请 %d 秒后重新尝试", result.RetryAfter/time.Second)
 		return errs.ErrRateLimit.WithMsg(msg)
 	}

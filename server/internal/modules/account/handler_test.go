@@ -43,7 +43,7 @@ func TestH5CallbackHTTPSetCookiesAndRedirect(t *testing.T) {
 			ExpiresIn:    7200,
 		},
 	}
-	svc := NewService(repo, nil, nil, wx)
+	svc := NewService(repo, nil, nil, nil, nil, wx)
 	h := NewHandler(svc, pkgjwt.JwtConfig{RefreshExpiration: 24 * time.Hour}, pkgjwt.JwtConfig{}, false, nil)
 
 	r := gin.New()
@@ -69,8 +69,8 @@ func TestH5CallbackHTTPSetCookiesAndRedirect(t *testing.T) {
 	if accessCookie.Secure {
 		t.Fatal("expected access_token cookie to be insecure in non-prod handler")
 	}
-	if accessCookie.Path != "/" {
-		t.Fatalf("expected access_token path %q, got %q", "/", accessCookie.Path)
+	if accessCookie.Path != "/api/v1/c" {
+		t.Fatalf("expected access_token path %q, got %q", "/api/v1/c", accessCookie.Path)
 	}
 	if accessCookie.MaxAge != int(time.Hour.Seconds()) {
 		t.Fatalf("expected access_token max age %d, got %d", int(time.Hour.Seconds()), accessCookie.MaxAge)
@@ -94,8 +94,8 @@ func TestH5CallbackHTTPSetCookiesAndRedirect(t *testing.T) {
 	if refreshCookie.Secure {
 		t.Fatal("expected refresh_token cookie to be insecure in non-prod handler")
 	}
-	if refreshCookie.Path != refreshTokenCookiePath {
-		t.Fatalf("expected refresh_token path %q, got %q", refreshTokenCookiePath, refreshCookie.Path)
+	if refreshCookie.Path != userRefreshTokenCookiePath {
+		t.Fatalf("expected refresh_token path %q, got %q", userRefreshTokenCookiePath, refreshCookie.Path)
 	}
 	if refreshCookie.MaxAge != int((24 * time.Hour).Seconds()) {
 		t.Fatalf("expected refresh_token max age %d, got %d", int((24 * time.Hour).Seconds()), refreshCookie.MaxAge)
@@ -136,7 +136,7 @@ func TestSendSmsCodeHTTPReturnsCode(t *testing.T) {
 		_ = rdb.Close()
 	})
 
-	h := NewHandler(NewService(nil, rdb, nil, nil), pkgjwt.JwtConfig{}, pkgjwt.JwtConfig{}, false, nil)
+	h := NewHandler(NewService(nil, nil, nil, rdb, nil, nil), pkgjwt.JwtConfig{}, pkgjwt.JwtConfig{}, false, nil)
 	r := gin.New()
 	r.POST("/sms/code", h.SendSmsCode)
 
@@ -196,15 +196,15 @@ func TestLogoutHTTPClearsCookiesAndBlacklistsTokens(t *testing.T) {
 
 	accessToken := signTestUserToken(t, "test-secret", 1001, "access-jti", time.Now().Add(time.Hour))
 	refreshToken := signTestUserToken(t, "test-secret", 1001, "refresh-jti", time.Now().Add(24*time.Hour))
-	h := NewHandler(NewService(nil, rdb, nil, nil), pkgjwt.GetUserConfig(), pkgjwt.JwtConfig{}, false, nil)
+	h := NewHandler(NewService(nil, nil, nil, rdb, nil, nil), pkgjwt.GetUserConfig(), pkgjwt.JwtConfig{}, false, nil)
 
 	r := gin.New()
 	r.POST("/logout", h.Logout)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/logout", nil)
-	req.AddCookie(&http.Cookie{Name: accessTokenCookieName, Value: accessToken, Path: accessTokenCookiePath})
-	req.AddCookie(&http.Cookie{Name: refreshTokenCookieName, Value: refreshToken, Path: refreshTokenCookiePath})
+	req.AddCookie(&http.Cookie{Name: userAccessTokenCookieName, Value: accessToken, Path: userAccessTokenCookiePath})
+	req.AddCookie(&http.Cookie{Name: userRefreshTokenCookieName, Value: refreshToken, Path: userRefreshTokenCookiePath})
 	r.ServeHTTP(w, req)
 
 	resp := w.Result()
@@ -213,9 +213,9 @@ func TestLogoutHTTPClearsCookiesAndBlacklistsTokens(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, resp.StatusCode)
 	}
 
-	accessCookie := findCookie(t, resp.Cookies(), accessTokenCookieName)
-	if accessCookie.Path != accessTokenCookiePath {
-		t.Fatalf("expected access_token delete path %q, got %q", accessTokenCookiePath, accessCookie.Path)
+	accessCookie := findCookie(t, resp.Cookies(), userAccessTokenCookieName)
+	if accessCookie.Path != userAccessTokenCookiePath {
+		t.Fatalf("expected access_token delete path %q, got %q", userAccessTokenCookiePath, accessCookie.Path)
 	}
 	if accessCookie.MaxAge >= 0 {
 		t.Fatalf("expected access_token delete max age < 0, got %d", accessCookie.MaxAge)
@@ -224,9 +224,9 @@ func TestLogoutHTTPClearsCookiesAndBlacklistsTokens(t *testing.T) {
 		t.Fatal("expected access_token delete cookie to be insecure in non-prod handler")
 	}
 
-	refreshCookie := findCookie(t, resp.Cookies(), refreshTokenCookieName)
-	if refreshCookie.Path != refreshTokenCookiePath {
-		t.Fatalf("expected refresh_token delete path %q, got %q", refreshTokenCookiePath, refreshCookie.Path)
+	refreshCookie := findCookie(t, resp.Cookies(), userRefreshTokenCookieName)
+	if refreshCookie.Path != userRefreshTokenCookiePath {
+		t.Fatalf("expected refresh_token delete path %q, got %q", userRefreshTokenCookiePath, refreshCookie.Path)
 	}
 	if refreshCookie.MaxAge >= 0 {
 		t.Fatalf("expected refresh_token delete max age < 0, got %d", refreshCookie.MaxAge)

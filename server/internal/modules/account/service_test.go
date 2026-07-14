@@ -83,6 +83,24 @@ func (m *mockUserRepo) Update(_ context.Context, id int64, updates map[string]an
 	return m.updateErr
 }
 
+func (m *mockUserRepo) FindById(_ context.Context, id int64) (*User, error) {
+	if m.found != nil && m.found.ID == id {
+		return m.found, nil
+	}
+	return nil, nil
+}
+
+func (m *mockUserRepo) GetBalance(_ context.Context, id int64) (int64, error) {
+	if m.found != nil && m.found.ID == id {
+		return m.found.BalanceCents, nil
+	}
+	return 0, nil
+}
+
+func (m *mockUserRepo) ListBalanceLogs(_ context.Context, _ int64, _, _ int) ([]BalanceLog, int64, error) {
+	return nil, 0, nil
+}
+
 type mockWxLoginClient struct {
 	resp      *wxlogin.Code2SessionResp
 	err       error
@@ -139,7 +157,7 @@ func TestMpLoginSuccess(t *testing.T) {
 		},
 	}
 
-	svc := NewService(repo, rdb, wx, nil)
+	svc := NewService(repo, nil, nil, rdb, wx, nil)
 	result, err := svc.MpLogin(ctx, "login-code")
 	if err != nil {
 		t.Fatalf("MpLogin returned error: %v", err)
@@ -241,7 +259,7 @@ func TestH5CallbackSuccessUsesOpenidH5(t *testing.T) {
 		},
 	}
 
-	svc := NewService(repo, nil, nil, wx)
+	svc := NewService(repo, nil, nil, nil, nil, wx)
 	result, err := svc.H5Callback(ctx, "oauth-code")
 	if err != nil {
 		t.Fatalf("H5Callback returned error: %v", err)
@@ -289,7 +307,7 @@ func TestLogoutBlacklistsAccessAndRefreshTokens(t *testing.T) {
 		_ = rdb.Close()
 	})
 
-	svc := NewService(nil, rdb, nil, nil)
+	svc := NewService(nil, nil, nil, rdb, nil, nil)
 	accessToken := signTestUserToken(t, "test-secret", 1001, "access-jti", time.Now().Add(time.Hour))
 	refreshToken := signTestUserToken(t, "test-secret", 1001, "refresh-jti", time.Now().Add(24*time.Hour))
 
@@ -316,7 +334,7 @@ func TestSendSmsCodeStoresCodeAndRateLimits(t *testing.T) {
 		_ = rdb.Close()
 	})
 
-	svc := NewService(nil, rdb, nil, nil)
+	svc := NewService(nil, nil, nil, rdb, nil, nil)
 	code, err := svc.SendSmsCode(ctx, "13800138000", "register")
 	if err != nil {
 		t.Fatalf("SendSmsCode returned error: %v", err)

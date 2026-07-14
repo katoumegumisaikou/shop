@@ -19,7 +19,7 @@ type MpLoginResponse struct {
 }
 
 // ToMpLoginResponse 把领域层登录结果转换为 HTTP 响应 DTO。
-func ToMpLoginResponse(result *MpLoginResult) MpLoginResponse {
+func ToMpLoginResponse(result *LoginResult) MpLoginResponse {
 	if result == nil {
 		return MpLoginResponse{}
 	}
@@ -95,4 +95,82 @@ type UserResp struct {
 	Status       string         `json:"status"`
 	BalanceCents int64          `json:"balance_cents"`
 	CreatedAt    time.Time      `json:"created_at"`
+}
+
+// ToUserResp 将 User 实体转换为 HTTP 响应 DTO。
+func ToUserResp(u *User) *UserResp {
+	if u == nil {
+		return nil
+	}
+	return &UserResp{
+		ID:           types.Int64Str(u.ID),
+		Phone:        u.Phone,
+		Nickname:     u.NickName,
+		Avatar:       u.Avatar,
+		Gender:       u.Gender,
+		Birthday:     u.Birthday,
+		Status:       u.Status,
+		BalanceCents: u.BalanceCents,
+		CreatedAt:    u.CreatedAt,
+	}
+}
+
+type DeactivateReq struct {
+	Reason string `json:"reason"`
+}
+
+// UpdateMeReq 更新个人信息请求。
+type UpdateMeReq struct {
+	Nickname *string    `json:"nickname"` // 昵称
+	Avatar   *string    `json:"avatar"`   // 头像 URL
+	Gender   *int       `json:"gender"`   // 性别
+	Birthday *time.Time `json:"birthday"` // 生日
+}
+
+// BalanceResp 余额响应。
+type BalanceResp struct {
+	BalanceCents int64 `json:"balance_cents"` // 余额，单位：分
+}
+
+// BalanceLogResp 余额流水响应。
+type BalanceLogResp struct {
+	ID                 int64     `json:"id"`
+	ChangeCents        int64     `json:"change_cents"`         // 变动金额，单位：分
+	Type               string    `json:"type"`                 // 变动类型
+	RefType            *string   `json:"ref_type,omitempty"`   // 关联业务类型
+	RefID              *int64    `json:"ref_id,omitempty"`     // 关联业务 ID
+	BalanceBeforeCents int64     `json:"balance_before_cents"` // 变动前余额
+	BalanceAfterCents  int64     `json:"balance_after_cents"`  // 变动后余额
+	Remark             *string   `json:"remark,omitempty"`     // 备注
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+// BalanceLogPageResp 余额流水分页响应。
+type BalanceLogPageResp struct {
+	List  []BalanceLogResp `json:"list"`
+	Total int64            `json:"total"`
+}
+
+// AdminCaptchaResp 验证码响应。
+type AdminCaptchaResp struct {
+	CaptchaID string `json:"captcha_id"`
+	ImageB64  string `json:"captcha_b64"`
+}
+
+// AdminLoginReq 登录请求
+type AdminLoginReq struct {
+	Username    string `json:"username"     binding:"required"`
+	Password    string `json:"password"     binding:"required"`
+	CaptchaID   string `json:"captcha_id"   binding:"required"`
+	CaptchaCode string `json:"captcha_code" binding:"required"`
+}
+
+// AdminLoginResponse 登录回复
+type AdminLoginResponse struct {
+	AccessToken      string `json:"access_token"`       // 访问接口使用的短期 token
+	RefreshToken     string `json:"refresh_token"`      // 刷新 access token 使用的长期 token
+	TokenType        string `json:"token_type"`         // token 类型，固定为 Bearer
+	AccessExpiresIn  int64  `json:"expires_in"`         // access token 剩余有效期，单位秒
+	RefreshExpiresIn int64  `json:"refresh_expires_in"` // refresh token 剩余有效期，单位秒
+	AdminID          int64  `json:"admin_id"`           // 当前登录管理员 ID
 }

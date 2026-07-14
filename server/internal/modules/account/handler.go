@@ -2,6 +2,7 @@ package account
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -13,10 +14,17 @@ import (
 )
 
 const (
-	accessTokenCookieName  = "access_token"
-	refreshTokenCookieName = "refresh_token"
-	accessTokenCookiePath  = "/"
-	refreshTokenCookiePath = "/api/v1/c/auth"
+	// C 端令牌 cookie
+	userAccessTokenCookieName  = "access_token"
+	userRefreshTokenCookieName = "refresh_token"
+	userAccessTokenCookiePath  = "/api/v1/c"
+	userRefreshTokenCookiePath = "/api/v1/c/auth"
+
+	// Admin 端令牌 cookie
+	adminAccessTokenCookieName  = "access_token"
+	adminRefreshTokenCookieName = "refresh_token"
+	adminAccessTokenCookiePath  = "/api/v1/admin"
+	adminRefreshTokenCookiePath = "/api/v1/admin/auth"
 )
 
 // Handler 账号模块 HTTP 处理器。
@@ -96,20 +104,20 @@ func (h *Handler) H5Callback(c *gin.Context) {
 
 	// access_token 设为 HttpOnly + Secure cookie，禁止 JS 读取
 	c.SetCookie(
-		accessTokenCookieName,
+		userAccessTokenCookieName,
 		result.AccessToken,
 		int(result.ExpiresIn),
-		accessTokenCookiePath,
+		userAccessTokenCookiePath,
 		"",       // domain 由 nginx 注入，此处留空
 		h.isProd, // secure（HTTPS only）
 		true,     // httpOnly
 	)
 	// refresh_token 同样走 cookie
 	c.SetCookie(
-		refreshTokenCookieName,
+		userRefreshTokenCookieName,
 		result.RefreshToken,
 		refreshMaxAge,
-		refreshTokenCookiePath,
+		userRefreshTokenCookiePath,
 		"",
 		h.isProd,
 		true,
@@ -176,7 +184,7 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 	if err != nil {
 		// 尝试从cookie中取出
 		var ok bool
-		req.RefreshToken, ok = utils.GetJWTTokenFromCtx(c, refreshTokenCookieName)
+		req.RefreshToken, ok = utils.GetJWTTokenFromCtx(c, userRefreshTokenCookieName)
 		if !ok {
 			response.Error(c, errs.ErrUnauth)
 			return
@@ -189,8 +197,8 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.ExpiresIn), accessTokenCookiePath, "", h.isProd, true)
-	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), refreshTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(userAccessTokenCookieName, result.AccessToken, int(result.ExpiresIn), userAccessTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(userRefreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), userRefreshTokenCookiePath, "", h.isProd, true)
 	response.OK(c, gin.H{
 		"access_token": result.AccessToken,
 		"expires_in":   result.ExpiresIn,
@@ -198,20 +206,20 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 }
 
 func (h *Handler) Logout(c *gin.Context) {
-	accessToken, ok := utils.GetJWTTokenFromCtx(c, accessTokenCookieName)
+	accessToken, ok := utils.GetJWTTokenFromCtx(c, userAccessTokenCookieName)
 	if !ok {
 		response.Error(c, errs.ErrUnauth)
 		return
 	}
 
-	refreshToken, _ := getCookieToken(c, refreshTokenCookieName)
+	refreshToken, _ := getCookieToken(c, userRefreshTokenCookieName)
 	if err := h.svc.Logout(c.Request.Context(), accessToken, refreshToken); err != nil {
 		response.Error(c, err)
 		return
 	}
 	// 清除 cookie
-	c.SetCookie(accessTokenCookieName, "", -1, accessTokenCookiePath, "", h.isProd, true)
-	c.SetCookie(refreshTokenCookieName, "", -1, refreshTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(userAccessTokenCookieName, "", -1, userAccessTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(userRefreshTokenCookieName, "", -1, userRefreshTokenCookiePath, "", h.isProd, true)
 
 	response.OK(c, nil)
 }
@@ -262,8 +270,8 @@ func (h *Handler) RegisterByPhone(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.ExpiresIn), accessTokenCookiePath, "", h.isProd, true)
-	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), refreshTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(userAccessTokenCookieName, result.AccessToken, int(result.ExpiresIn), userAccessTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(userRefreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), userRefreshTokenCookiePath, "", h.isProd, true)
 	response.OK(c, nil)
 }
 
@@ -274,8 +282,8 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	accessToken, _ := utils.GetJWTTokenFromCtx(c, accessTokenCookieName)
-	refreshToken, _ := getCookieToken(c, refreshTokenCookieName)
+	accessToken, _ := utils.GetJWTTokenFromCtx(c, userAccessTokenCookieName)
+	refreshToken, _ := getCookieToken(c, userRefreshTokenCookieName)
 
 	result, err := h.svc.ResetPassword(c.Request.Context(), req.Phone, req.Password, req.Code, accessToken, refreshToken)
 	if err != nil {
@@ -283,8 +291,8 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.ExpiresIn), accessTokenCookiePath, "", h.isProd, true)
-	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), refreshTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(userAccessTokenCookieName, result.AccessToken, int(result.ExpiresIn), userAccessTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(userRefreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), userRefreshTokenCookiePath, "", h.isProd, true)
 	response.OK(c, nil)
 }
 
@@ -301,7 +309,170 @@ func (h *Handler) PhoneLogin(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie(accessTokenCookieName, result.AccessToken, int(result.AccessExpiresIn), accessTokenCookiePath, "", h.isProd, true)
-	c.SetCookie(refreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), refreshTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(userAccessTokenCookieName, result.AccessToken, int(result.AccessExpiresIn), userAccessTokenCookiePath, "", h.isProd, true)
+	c.SetCookie(userRefreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), userRefreshTokenCookiePath, "", h.isProd, true)
 	response.OK(c, result)
+}
+
+func (h *Handler) GetMe(c *gin.Context) {
+	userID, isExist := c.Get("user_id")
+	if !isExist {
+		response.Error(c, errs.ErrUnauth)
+		return
+	}
+
+	uid, ok := userID.(int64)
+	if !ok {
+		response.Error(c, errs.ErrInternal)
+		return
+	}
+
+	result, err := h.svc.GetMe(c.Request.Context(), uid)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	response.OK(c, result)
+}
+
+// RequestDeactivate 申请注销。
+func (h *Handler) RequestDeactivate(c *gin.Context) {
+	var req DeactivateReq
+	if err := c.ShouldBind(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	userID := c.GetInt64("user_id")
+	if userID == 0 {
+		response.Error(c, errs.ErrServiceDegraded)
+		return
+	}
+	if err := h.svc.RequestDeactivate(c.Request.Context(), userID, req.Reason); err != nil {
+		response.Error(c, errs.ErrServiceDegraded)
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (h *Handler) CancelDeactivate(c *gin.Context) {
+	userID := c.GetInt64("user_id")
+	if userID == 0 {
+		response.Error(c, errs.ErrServiceDegraded)
+		return
+	}
+
+	if err := h.svc.CancelDeactivate(c.Request.Context(), userID); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (h *Handler) GetMyBalance(c *gin.Context) {
+	userID := c.GetInt64("user_id")
+	if userID == 0 {
+		response.Error(c, errs.ErrServiceDegraded)
+		return
+	}
+
+	balance_cents, err := h.svc.GetBalance(c.Request.Context(), userID)
+	if err != nil {
+		response.Error(c, errs.ErrInternal)
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	logs, total, err := h.svc.ListBalanceLogs(c.Request.Context(), userID, page, size)
+	if err != nil {
+		response.Error(c, errs.ErrInternal)
+		return
+	}
+	response.OK(c, gin.H{
+		"balance_cents": balance_cents,
+		"logs":          logs,
+		"total":         total,
+		"page":          page,
+		"page_size":     size,
+	})
+}
+
+func (h *Handler) UpdateMe(c *gin.Context) {
+	var req UpdateMeReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errs.ErrParam.WithMsg("请求参数格式错误"))
+		return
+	}
+
+	userID := c.GetInt64("user_id")
+	if userID == 0 {
+		response.Error(c, errs.ErrUnauth)
+		return
+	}
+
+	result, err := h.svc.UpdateMe(c.Request.Context(), userID, &req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, result)
+}
+
+// ------------------------------ Admin 端 ------------------
+
+func (h *Handler) AdminGetCaptcha(c *gin.Context) {
+	resp, err := h.svc.AdminGetCaptcha(c.Request.Context())
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, resp)
+}
+
+func (h *Handler) AdminLogin(c *gin.Context) {
+	var req AdminLoginReq
+	err := c.ShouldBind(&req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	var result *LoginResult
+	if result, err = h.svc.AdminLogin(c.Request.Context(), &req, c.ClientIP(), c.Request.UserAgent()); err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	resp := &AdminLoginResponse{
+		AdminID:          result.UserID,
+		AccessToken:      result.AccessToken,
+		AccessExpiresIn:  result.ExpiresIn,
+		RefreshToken:     result.RefreshToken,
+		RefreshExpiresIn: result.RefreshExpiresIn,
+		TokenType:        "Bearer",
+	}
+	c.SetCookie(
+		adminAccessTokenCookieName,
+		resp.AccessToken,
+		int(resp.AccessExpiresIn),
+		adminAccessTokenCookiePath,
+		"",
+		h.isProd,
+		true,
+	)
+	c.SetCookie(
+		adminRefreshTokenCookieName,
+		resp.RefreshToken,
+		int(resp.RefreshExpiresIn),
+		adminRefreshTokenCookiePath,
+		"",
+		h.isProd,
+		true,
+	)
+	response.OK(c, resp)
+}
+
+func (h *Handler) AdminLoginout(c *gin.Context) {
+
 }
