@@ -76,10 +76,10 @@ func UserAuth(rdb *redis.Client, db *gorm.DB, jwtCfg pkgjwt.JwtConfig) gin.Handl
 	}
 }
 
-type AdminAuthFunc func(string) gin.HandlerFunc
+type AdminAuthFunc func(...string) gin.HandlerFunc
 
 func AdminAuth(rdb *redis.Client, db *gorm.DB, jwtCfg pkgjwt.JwtConfig) AdminAuthFunc {
-	return func(requiredPerm string) gin.HandlerFunc {
+	return func(requiredPerms ...string) gin.HandlerFunc {
 		return func(c *gin.Context) {
 			tokenStr, ok := getJWTTokenFromCtx(c)
 			if !ok {
@@ -120,7 +120,7 @@ func AdminAuth(rdb *redis.Client, db *gorm.DB, jwtCfg pkgjwt.JwtConfig) AdminAut
 
 			// 查询管理员权限
 			adminPerms, _ := getAdminPerms(c.Request.Context(), db, rdb, claims.Sub)
-			if !checkAdminPerm(adminPerms, requiredPerm) {
+			if !checkAdminPerm(adminPerms, requiredPerms...) {
 				response.Error(c, errs.ErrForbidden)
 				return
 			}
@@ -131,14 +131,21 @@ func AdminAuth(rdb *redis.Client, db *gorm.DB, jwtCfg pkgjwt.JwtConfig) AdminAut
 	}
 }
 
-// checkAdminPerm 检查逗号分隔的权限字符串中是否包含所需权限。
-func checkAdminPerm(adminPerms, required string) bool {
-	if required == "" {
+// checkAdminPerm 检查逗号分隔的权限字符串中是否包含所需任一权限。
+// required 为空或传入空字符串时直接放行。
+func checkAdminPerm(adminPerms string, required ...string) bool {
+	if len(required) == 0 {
 		return true
 	}
-	for _, p := range strings.Split(adminPerms, ",") {
-		if p == required {
-			return true
+	permList := strings.Split(adminPerms, ",")
+	for _, r := range required {
+		if r == "" {
+			continue
+		}
+		for _, p := range permList {
+			if strings.TrimSpace(p) == strings.TrimSpace(r) {
+				return true
+			}
 		}
 	}
 	return false

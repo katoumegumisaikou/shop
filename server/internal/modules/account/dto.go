@@ -174,3 +174,45 @@ type AdminLoginResponse struct {
 	RefreshExpiresIn int64  `json:"refresh_expires_in"` // refresh token 剩余有效期，单位秒
 	AdminID          int64  `json:"admin_id"`           // 当前登录管理员 ID
 }
+
+// AdminResp 管理员信息响应。
+type AdminResp struct {
+	ID          types.Int64Str `json:"id"`
+	Username    string         `json:"username"`
+	RealName    *string        `json:"real_name,omitempty"`
+	Phone       *string        `json:"phone,omitempty"`
+	Status      string         `json:"status"`
+	LastLoginAt *time.Time     `json:"last_login_at,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	Roles       []string       `json:"roles"`
+	Perms       []string       `json:"perms"`
+}
+
+// toAdminResp 将 entity 转为响应 DTO。
+func toAdminResp(a *Admin) *AdminResp {
+	return &AdminResp{
+		ID:          types.Int64Str(a.ID),
+		Username:    a.Username,
+		RealName:    a.RealName,
+		Phone:       a.Phone,
+		Status:      a.Status,
+		LastLoginAt: a.LastLoginAt,
+		CreatedAt:   a.CreatedAt,
+	}
+}
+
+// UpdateAdminReq 更新管理员请求。
+type UpdateAdminReq struct {
+	RealName *string `json:"real_name"`
+	Phone    *string `json:"phone"`
+	Status   *string `json:"status"`
+}
+
+// CreateAdminReq 创建管理员请求。
+type CreateAdminReq struct {
+	Username string           `json:"username"  binding:"required"`
+	Password string           `json:"password"  binding:"required,min=6"`
+	RealName *string          `json:"real_name"`
+	Phone    *string          `json:"phone"`
+	RoleIDs  []types.Int64Str `json:"role_ids"`
+}

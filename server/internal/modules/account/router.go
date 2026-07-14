@@ -57,7 +57,13 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, rdb *redis.Client, db *gorm.
 		authGroup := admin.Group("/auth")
 		authGroup.POST("/captcha", h.AdminGetCaptcha)
 		authGroup.POST("/login", h.AdminLogin)
-		authGroup.POST("/loginout", sensitive, adminAuth(""))
+		authGroup.POST("/loginout", sensitive, adminAuth(), h.AdminLoginout)
+		admin.GET("/me", adminAuth())
+
+		admins := admin.Group("/admins")
+		admins.GET("", adminAuth("system.admin.view"), h.ListAdmins)
+		admins.PUT("/:id", sensitive, adminAuth("system.admin.edit"), h.UpdateAdmin)
+		admins.POST("/:id", sensitive, adminAuth("system.admin.create"), h.CreateAdmin)
 	}
 
 }

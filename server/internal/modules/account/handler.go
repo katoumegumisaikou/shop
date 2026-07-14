@@ -474,5 +474,99 @@ func (h *Handler) AdminLogin(c *gin.Context) {
 }
 
 func (h *Handler) AdminLoginout(c *gin.Context) {
+	accessStr, _ := utils.GetJWTTokenFromCtx(c, adminAccessTokenCookieName)
+	refreshStr, _ := utils.GetJWTTokenFromCtx(c, adminRefreshTokenCookieName)
 
+	if err := h.svc.AdminLoginout(c.Request.Context(), accessStr, refreshStr); err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	c.SetCookie(
+		adminAccessTokenCookieName,
+		"",
+		-1,
+		adminAccessTokenCookiePath,
+		"",
+		h.isProd,
+		true,
+	)
+	c.SetCookie(
+		adminRefreshTokenCookieName,
+		"",
+		-1,
+		adminRefreshTokenCookiePath,
+		"",
+		h.isProd,
+		true,
+	)
+	response.OK(c, nil)
+}
+
+func (h *Handler) AdminGetMe(c *gin.Context) {
+	adminID := c.GetInt64("admin_id")
+	if adminID == 0 {
+		response.Error(c, errs.ErrServiceDegraded)
+		return
+	}
+	resp, err := h.svc.AdminGetMe(c.Request.Context(), adminID)
+	if err != nil {
+		response.Error(c, errs.ErrServiceDegraded)
+		return
+	}
+	response.OK(c, resp)
+}
+
+func (h *Handler) ListAdmins(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+
+	admins, total, err := h.svc.ListAdmins(c.Request.Context(), page, size)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	list := make([]AdminResp, len(admins))
+	for i, a := range admins {
+		list[i] = *toAdminResp(&a)
+	}
+
+	response.OK(c, gin.H{
+		"list":      list,
+		"total":     total,
+		"page":      page,
+		"page_size": size,
+	})
+}
+
+func (h *Handler) UpdateAdmin(c *gin.Context) {
+	adminID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+
+	var req UpdateAdminReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+
+	if err := h.svc.UpdateAdmin(c.Request.Context(), adminID, &req); err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	// 返回更新后的管理员信息
+	resp, err := h.svc.AdminGetMe(c.Request.Context(), adminID)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, resp)
+}
+
+func (h *Handler) CreateAdmin(c *gin.Context) {
+	response.Error(c, errs.ErrServiceDegraded.WithMsg("尚未实现"))
 }

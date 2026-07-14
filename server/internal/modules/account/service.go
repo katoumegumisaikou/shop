@@ -904,3 +904,47 @@ func (s *Service) AdminLogin(ctx context.Context, loginReq *AdminLoginReq, ip, u
 
 	return s.signAdminToken(admin.ID, roleCodes, permCodes)
 }
+
+func (s *Service) AdminLoginout(ctx context.Context, accessToken, refreshToken string) error {
+	accessClaims, _ := pkgjwt.Parse(s.adminCfg.JwtSecret, accessToken)
+	refreshClaims, _ := pkgjwt.Parse(s.adminCfg.JwtSecret, refreshToken)
+
+	_ = s.blacklistTokenClaims(ctx, accessClaims)
+	_ = s.blacklistTokenClaims(ctx, refreshClaims)
+
+	return nil
+}
+
+func (s *Service) AdminGetMe(ctx context.Context, adminID int64) (*AdminResp, error) {
+	admin, err := s.adminRepo.FindByID(ctx, adminID)
+	if err != nil {
+		return nil, errs.ErrNotFound
+	}
+	return toAdminResp(admin), nil
+}
+
+// ListAdmins 管理员列表（分页）。
+func (s *Service) ListAdmins(ctx context.Context, page, size int) ([]Admin, int64, error) {
+	return s.adminRepo.ListAdmins(ctx, page, size)
+}
+
+// UpdateAdmin 更新管理员信息。
+func (s *Service) UpdateAdmin(ctx context.Context, adminID int64, req *UpdateAdminReq) error {
+	updates := make(map[string]any)
+	if req.RealName != nil {
+		updates["real_name"] = *req.RealName
+	}
+	if req.Phone != nil {
+		updates["phone"] = *req.Phone
+	}
+	if req.Status != nil {
+		updates["status"] = *req.Status
+	}
+	if len(updates) == 0 {
+		return errs.ErrParam.WithMsg("没有需要更新的字段")
+	}
+	return s.adminRepo.Update(ctx, adminID, updates)
+}
+func (s *Service) CreateAdmin(ctx context.Context, req *CreateAdminReq) (*AdminResp, error) {
+	return nil, errs.ErrServiceDegraded.WithMsg("尚未实现")
+}

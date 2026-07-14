@@ -183,8 +183,12 @@ func (r *userRepoImpl) ListBalanceLogs(ctx context.Context, userID int64, page, 
 type AdminRepo interface {
 	// FindByUserName 根据用户名查询管理员。
 	FindByUserName(ctx context.Context, username string) (*Admin, error)
+	// FindByID 根据 ID 查询管理员。
+	FindByID(ctx context.Context, id int64) (*Admin, error)
 	// Update 根据 ID 更新管理员指定字段。
 	Update(ctx context.Context, id int64, updates map[string]any) error
+	// ListAdmins 查询管理员列表（分页）。
+	ListAdmins(ctx context.Context, page, size int) ([]Admin, int64, error)
 }
 
 // ------- AdminRepoImpl -------
@@ -211,6 +215,42 @@ func (r *adminRepoImpl) Update(ctx context.Context, id int64, updates map[string
 		Model(&Admin{}).
 		Where("id = ?", id).
 		Updates(updates).Error
+}
+
+func (r *adminRepoImpl) FindByID(ctx context.Context, id int64) (*Admin, error) {
+	var admin Admin
+	if err := r.db.WithContext(ctx).
+		First(&admin, id).Error; err != nil {
+		return nil, err
+	}
+	return &admin, nil
+}
+
+func (r *adminRepoImpl) ListAdmins(ctx context.Context, page, size int) ([]Admin, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 {
+		size = 20
+	}
+	var admins []Admin
+	var total int64
+
+	query := r.db.WithContext(ctx).Model(&Admin{})
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * size
+	if err := query.Order("created_at DESC").
+		Offset(offset).
+		Limit(size).
+		Find(&admins).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return admins, total, nil
 }
 
 // -------- RoleRepo --------

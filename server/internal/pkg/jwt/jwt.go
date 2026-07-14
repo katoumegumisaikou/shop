@@ -33,6 +33,10 @@ func Sign(secret string, claim Claims) (string, error) {
 }
 
 func Parse(secret string, token string) (*Claims, error) {
+	if token == "" {
+		return nil, fmt.Errorf("token 为空")
+	}
+
 	t, err := jwt.ParseWithClaims(token, &Claims{}, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("jwt: unexpected signing method")
