@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"image/png"
 	"math"
@@ -16,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 
 	"shop/internal/middleware"
 	"shop/internal/pkg/errs"
@@ -43,6 +45,8 @@ const (
 	// loginFailThreshold 登录失败最大次数，超过后触发锁定。
 	loginFailThreshold = 5
 	// deactivatePeriod 注销冷静期。
+	// bcryptCost bcrypt 密码哈希成本。
+	bcryptCost       = 12
 	deactivatePeriod = 30 * 24 * time.Hour
 )
 
@@ -534,7 +538,7 @@ func (s *Service) RegisterByPhone(ctx context.Context, phone, password, code str
 	}
 
 	// 哈希加密密钥
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return nil, errs.ErrInternal
 	}
@@ -581,7 +585,7 @@ func (s *Service) ResetPassword(ctx context.Context, phone, password, code, acce
 	}
 
 	// 哈希加密密钥
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return nil, errs.ErrInternal
 	}
@@ -945,6 +949,269 @@ func (s *Service) UpdateAdmin(ctx context.Context, adminID int64, req *UpdateAdm
 	}
 	return s.adminRepo.Update(ctx, adminID, updates)
 }
+
 func (s *Service) CreateAdmin(ctx context.Context, req *CreateAdminReq) (*AdminResp, error) {
-	return nil, errs.ErrServiceDegraded.WithMsg("尚未实现")
+	// 验证密码强度
+	if err := validatePassword(req.Password); err != nil {
+		return nil, err
+	}
+
+	// 查看手机是否被使用
+	if req.Phone != "" {
+		cnt, err := s.adminRepo.CountByPhone(ctx, req.Phone)
+		if err != nil {
+			return nil, err
+		} else if cnt > 0 {
+			return nil, errs.ErrConflict.WithMsg("手机号已经被使用")
+		}
+	}
+
+	// 生成 ID 和密码哈希
+	id := snowflake.NextID()
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, errs.ErrInternal
+	}
+
+	admin := &Admin{
+		ID:           id,
+		Username:     req.Username,
+		PasswordHash: string(hash),
+		RealName:     req.RealName,
+		Phone:        &req.Phone,
+		Status:       "active",
+	}
+	if err := s.adminRepo.Create(ctx, admin); err != nil {
+		return nil, err
+	}
+	// 分配角色
+	if len(req.RoleIDs) > 0 {
+		ids := make([]int64, len(req.RoleIDs))
+		for i, rid := range req.RoleIDs {
+			ids[i] = rid.Int64()
+		}
+		if err := s.roleRepo.BatchBindRoles(ctx, id, ids); err != nil {
+			return nil, err
+		}
+	}
+
+	return s.AdminGetMe(ctx, id)
+}
+
+// DisableAdmin 禁用管理员。
+func (s *Service) DisableAdmin(ctx context.Context, adminID int64) error {
+	if _, err := s.adminRepo.FindByID(ctx, adminID); err != nil {
+		return errs.ErrNotFound
+	}
+	return s.adminRepo.Update(ctx, adminID, map[string]any{"status": "disabled"})
+}
+
+func (s *Service) EnableAdmin(ctx context.Context, adminID int64) error {
+	if _, err := s.adminRepo.FindByID(ctx, adminID); err != nil {
+		return errs.ErrNotFound
+	}
+	return s.adminRepo.Update(ctx, adminID, map[string]any{"status": "active"})
+}
+
+func (s *Service) ResetAdminPwd(ctx context.Context, adminID int64, password string) error {
+	if err := validatePassword(password); err != nil {
+		return err
+	}
+	if _, err := s.adminRepo.FindByID(ctx, adminID); err != nil {
+		return errs.ErrNotFound
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	if err != nil {
+		return errs.ErrInternal
+	}
+	return s.adminRepo.Update(ctx, adminID, map[string]any{"password_hash": string(hash)})
+}
+
+func (s *Service) ListRoles(ctx context.Context) ([]RoleResp, error) {
+	roles, err := s.roleRepo.ListRoles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]RoleResp, 0, len(roles))
+	for i := range roles {
+		result = append(result, toRoleResp(&roles[i]))
+	}
+	return result, nil
+}
+
+func (s *Service) CreateRole(ctx context.Context, req *CreateRoleReq) (*RoleResp, error) {
+	code := strings.TrimSpace(req.Code)
+	name := strings.TrimSpace(req.Name)
+	if code == "" || name == "" {
+		return nil, errs.ErrParam.WithMsg("角色编码和名称不能为空")
+	}
+	permissions := uniqueStrings(req.Permissions)
+	role := &Role{ID: snowflake.NextID(), Code: code, Name: name}
+	if err := s.roleRepo.CreateRole(ctx, role, permissions); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.ErrParam.WithMsg("包含不存在的权限")
+		}
+		return nil, err
+	}
+	created, err := s.roleRepo.FindRoleByID(ctx, role.ID)
+	if err != nil {
+		return nil, err
+	}
+	resp := toRoleResp(created)
+	return &resp, nil
+}
+
+func (s *Service) UpdateRole(ctx context.Context, roleID int64, req *UpdateRoleReq) (*RoleResp, error) {
+	if req.Name == nil && req.Permissions == nil {
+		return nil, errs.ErrParam.WithMsg("没有需要更新的字段")
+	}
+	if _, err := s.roleRepo.FindRoleByID(ctx, roleID); err != nil {
+		return nil, errs.ErrNotFound
+	}
+	var name *string
+	if req.Name != nil {
+		trimmed := strings.TrimSpace(*req.Name)
+		if trimmed == "" {
+			return nil, errs.ErrParam.WithMsg("角色名称不能为空")
+		}
+		name = &trimmed
+	}
+	var permissions *[]string
+	if req.Permissions != nil {
+		items := uniqueStrings(*req.Permissions)
+		permissions = &items
+	}
+	if err := s.roleRepo.UpdateRole(ctx, roleID, name, permissions); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.ErrParam.WithMsg("包含不存在的权限")
+		}
+		return nil, err
+	}
+	updated, err := s.roleRepo.FindRoleByID(ctx, roleID)
+	if err != nil {
+		return nil, err
+	}
+	resp := toRoleResp(updated)
+	return &resp, nil
+}
+
+func (s *Service) DeleteRole(ctx context.Context, roleID int64) error {
+	role, err := s.roleRepo.FindRoleByID(ctx, roleID)
+	if err != nil {
+		return errs.ErrNotFound
+	}
+	if role.IsSystem {
+		return errs.ErrForbidden.WithMsg("系统角色不能删除")
+	}
+	return s.roleRepo.DeleteRole(ctx, roleID)
+}
+
+func (s *Service) ListPermissions(ctx context.Context) ([]PermissionResp, error) {
+	permissions, err := s.roleRepo.ListPermissions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]PermissionResp, 0, len(permissions))
+	for _, permission := range permissions {
+		result = append(result, PermissionResp{
+			Code: permission.Code, Module: permission.Module,
+			Action: permission.Action, Name: permission.Name,
+		})
+	}
+	return result, nil
+}
+
+func (s *Service) AdminListUsers(ctx context.Context, page, size int) ([]UserResp, int64, error) {
+	users, total, err := s.userRepo.ListUsers(ctx, page, size)
+	if err != nil {
+		return nil, 0, err
+	}
+	result := make([]UserResp, 0, len(users))
+	for i := range users {
+		result = append(result, *ToUserResp(&users[i]))
+	}
+	return result, total, nil
+}
+
+func (s *Service) AdminCreateUser(ctx context.Context, req *AdminCreateUserReq) (*UserResp, error) {
+	if err := validatePassword(req.Password); err != nil {
+		return nil, err
+	}
+	count, err := s.userRepo.CountByPhone(ctx, req.Phone)
+	if err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		return nil, errs.ErrConflict.WithMsg("手机号已经被使用")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcryptCost)
+	if err != nil {
+		return nil, errs.ErrInternal
+	}
+	phone := req.Phone
+	user := &User{
+		ID: snowflake.NextID(), Phone: &phone, PasswordHash: new(string(hash)),
+		NickName: req.Nickname, Source: "admin", Status: "active",
+	}
+	if err := s.userRepo.Create(ctx, user); err != nil {
+		return nil, err
+	}
+	return ToUserResp(user), nil
+}
+
+func (s *Service) AdminGetUser(ctx context.Context, userID int64) (*UserResp, error) {
+	user, err := s.userRepo.FindById(ctx, userID)
+	if err != nil {
+		return nil, errs.ErrNotFound
+	}
+	return ToUserResp(user), nil
+}
+
+func (s *Service) AdminDisableUser(ctx context.Context, userID int64) error {
+	return s.updateUserStatus(ctx, userID, "disabled")
+}
+
+func (s *Service) AdminEnableUser(ctx context.Context, userID int64) error {
+	return s.updateUserStatus(ctx, userID, "active")
+}
+
+func (s *Service) updateUserStatus(ctx context.Context, userID int64, status string) error {
+	if _, err := s.userRepo.FindById(ctx, userID); err != nil {
+		return errs.ErrNotFound
+	}
+	return s.userRepo.Update(ctx, userID, map[string]any{"status": status, "deactivate_at": nil})
+}
+
+func uniqueStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func ptr[T any](value T) *T { return &value }
+
+func (s *Service) AdminRechargeBalance(ctx context.Context, userID, amountCents, operatorID int64, remark string) error {
+	if amountCents < 0 {
+		return errs.ErrParam.WithMsg("充值金额必须大于 0")
+	}
+	return s.userRepo.RechargeBalance(ctx, userID, amountCents, operatorID, remark)
+}
+
+// AdminListBalanceLogs 管理员查看指定用户的余额流水。
+func (s *Service) AdminListBalanceLogs(ctx context.Context, userID int64, page, size int) ([]BalanceLog, int64, error) {
+	if size > 20 || size <= 1 {
+		size = 20
+	}
+	return s.userRepo.ListBalanceLogs(ctx, userID, page, size)
 }

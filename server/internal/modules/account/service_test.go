@@ -9,6 +9,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
 
 	"shop/internal/pkg/errs"
 	pkgjwt "shop/internal/pkg/jwt"
@@ -25,9 +26,50 @@ type mockUserRepo struct {
 	countActiveByPhoneExcludeErr error
 	countByPhone                 int64
 	countByPhoneErr              error
+	created                      *User
 	updatedID                    int64
 	updates                      map[string]any
 	updateErr                    error
+}
+
+type mockAdminRepo struct {
+	admin     *Admin
+	findErr   error
+	updatedID int64
+	updates   map[string]any
+	updateErr error
+}
+
+func (m *mockAdminRepo) FindByUserName(context.Context, string) (*Admin, error) {
+	return m.admin, m.findErr
+}
+
+func (m *mockAdminRepo) FindByID(_ context.Context, id int64) (*Admin, error) {
+	if m.findErr != nil {
+		return nil, m.findErr
+	}
+	if m.admin == nil || m.admin.ID != id {
+		return nil, errors.New("admin not found")
+	}
+	return m.admin, nil
+}
+
+func (m *mockAdminRepo) Update(_ context.Context, id int64, updates map[string]any) error {
+	m.updatedID = id
+	m.updates = updates
+	return m.updateErr
+}
+
+func (*mockAdminRepo) ListAdmins(context.Context, int, int) ([]Admin, int64, error) {
+	return nil, 0, nil
+}
+
+func (*mockAdminRepo) CountByPhone(context.Context, string) (int64, error) {
+	return 0, nil
+}
+
+func (*mockAdminRepo) Create(context.Context, *Admin) error {
+	return nil
 }
 
 func (m *mockUserRepo) FindByOpenidMP(_ context.Context, openid string) (*User, error) {
@@ -65,7 +107,8 @@ func (m *mockUserRepo) FindByPhone(_ context.Context, phone string) (*User, erro
 	return nil, nil
 }
 
-func (m *mockUserRepo) Create(_ context.Context, _ *User) error {
+func (m *mockUserRepo) Create(_ context.Context, user *User) error {
+	m.created = user
 	return nil
 }
 
@@ -101,12 +144,55 @@ func (m *mockUserRepo) ListBalanceLogs(_ context.Context, _ int64, _, _ int) ([]
 	return nil, 0, nil
 }
 
+func (m *mockUserRepo) ListUsers(context.Context, int, int) ([]User, int64, error) {
+	if m.found == nil {
+		return nil, 0, nil
+	}
+	return []User{*m.found}, 1, nil
+}
+
+func (m *mockUserRepo) RechargeBalance(_ context.Context, _, _, _ int64, _ string) error {
+	return nil
+}
+
 type mockWxLoginClient struct {
 	resp      *wxlogin.Code2SessionResp
 	err       error
 	oauthResp *wxlogin.OAuthResp
 	oauthErr  error
 }
+
+type mockRoleRepo struct {
+	role    *Role
+	deleted int64
+}
+
+func (*mockRoleRepo) GetAdminRoleCodes(context.Context, int64) ([]string, error) { return nil, nil }
+func (*mockRoleRepo) GetAdminPermCodes(context.Context, int64) ([]string, error) { return nil, nil }
+func (*mockRoleRepo) FindRolesByIDs(context.Context, []int64) ([]Role, error)    { return nil, nil }
+func (*mockRoleRepo) BatchBindRoles(context.Context, int64, []int64) error       { return nil }
+func (m *mockRoleRepo) ListRoles(context.Context) ([]Role, error) {
+	if m.role == nil {
+		return nil, nil
+	}
+	return []Role{*m.role}, nil
+}
+func (m *mockRoleRepo) FindRoleByID(_ context.Context, id int64) (*Role, error) {
+	if m.role == nil || m.role.ID != id {
+		return nil, errors.New("role not found")
+	}
+	return m.role, nil
+}
+func (m *mockRoleRepo) CreateRole(_ context.Context, role *Role, _ []string) error {
+	m.role = role
+	return nil
+}
+func (*mockRoleRepo) UpdateRole(context.Context, int64, *string, *[]string) error { return nil }
+func (m *mockRoleRepo) DeleteRole(_ context.Context, id int64) error {
+	m.deleted = id
+	return nil
+}
+func (*mockRoleRepo) ListPermissions(context.Context) ([]Permission, error) { return nil, nil }
 
 func (m mockWxLoginClient) Code2Session(context.Context, string) (*wxlogin.Code2SessionResp, error) {
 	return m.resp, m.err
@@ -357,6 +443,122 @@ func TestSendSmsCodeStoresCodeAndRateLimits(t *testing.T) {
 
 	if _, err := svc.SendSmsCode(ctx, "13800138000", "reset"); err != nil {
 		t.Fatalf("expected different purpose to use separate rate key, got %v", err)
+	}
+}
+
+func TestDisableAndEnableAdmin(t *testing.T) {
+	ctx := context.Background()
+	repo := &mockAdminRepo{admin: &Admin{ID: 1001, Status: "active"}}
+	svc := NewService(nil, repo, nil, nil, nil, nil)
+
+	if err := svc.DisableAdmin(ctx, 1001); err != nil {
+		t.Fatalf("DisableAdmin returned error: %v", err)
+	}
+	if repo.updatedID != 1001 || repo.updates["status"] != "disabled" {
+		t.Fatalf("expected disabled update for admin 1001, got id=%d updates=%v", repo.updatedID, repo.updates)
+	}
+
+	if err := svc.EnableAdmin(ctx, 1001); err != nil {
+		t.Fatalf("EnableAdmin returned error: %v", err)
+	}
+	if repo.updatedID != 1001 || repo.updates["status"] != "active" {
+		t.Fatalf("expected active update for admin 1001, got id=%d updates=%v", repo.updatedID, repo.updates)
+	}
+}
+
+func TestAdminStatusChangeReturnsNotFound(t *testing.T) {
+	svc := NewService(nil, &mockAdminRepo{}, nil, nil, nil, nil)
+
+	if err := svc.DisableAdmin(context.Background(), 404); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("expected not found error, got %v", err)
+	}
+	if err := svc.EnableAdmin(context.Background(), 404); !errors.Is(err, errs.ErrNotFound) {
+		t.Fatalf("expected not found error, got %v", err)
+	}
+}
+
+func TestResetAdminPwdHashesPassword(t *testing.T) {
+	ctx := context.Background()
+	repo := &mockAdminRepo{admin: &Admin{ID: 1001}}
+	svc := NewService(nil, repo, nil, nil, nil, nil)
+	password := "Admin123"
+
+	if err := svc.ResetAdminPwd(ctx, 1001, password); err != nil {
+		t.Fatalf("ResetAdminPwd returned error: %v", err)
+	}
+	hash, ok := repo.updates["password_hash"].(string)
+	if !ok || hash == "" {
+		t.Fatalf("expected password hash update, got %v", repo.updates)
+	}
+	if hash == password {
+		t.Fatal("password must not be stored as plaintext")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
+		t.Fatalf("stored hash does not match password: %v", err)
+	}
+}
+
+func TestResetAdminPwdValidatesPassword(t *testing.T) {
+	repo := &mockAdminRepo{admin: &Admin{ID: 1001}}
+	svc := NewService(nil, repo, nil, nil, nil, nil)
+
+	if err := svc.ResetAdminPwd(context.Background(), 1001, "123"); !errors.Is(err, errs.ErrParam) {
+		t.Fatalf("expected parameter error, got %v", err)
+	}
+	if repo.updates != nil {
+		t.Fatalf("invalid password must not be persisted, got %v", repo.updates)
+	}
+}
+
+func TestAdminCreateUserHashesPassword(t *testing.T) {
+	repo := &mockUserRepo{}
+	svc := NewService(repo, nil, nil, nil, nil, nil)
+	nickname := "测试用户"
+	resp, err := svc.AdminCreateUser(context.Background(), &AdminCreateUserReq{
+		Phone: "13800138000", Password: "User123", Nickname: &nickname,
+	})
+	if err != nil {
+		t.Fatalf("AdminCreateUser returned error: %v", err)
+	}
+	if resp == nil || repo.created == nil {
+		t.Fatal("expected created user and response")
+	}
+	if repo.created.Status != "active" || repo.created.Source != "admin" {
+		t.Fatalf("unexpected created user status/source: %#v", repo.created)
+	}
+	if repo.created.PasswordHash == nil {
+		t.Fatal("expected password hash")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(*repo.created.PasswordHash), []byte("User123")); err != nil {
+		t.Fatalf("stored hash does not match password: %v", err)
+	}
+}
+
+func TestAdminDisableAndEnableUser(t *testing.T) {
+	repo := &mockUserRepo{found: &User{ID: 2001, Status: "active"}}
+	svc := NewService(repo, nil, nil, nil, nil, nil)
+	if err := svc.AdminDisableUser(context.Background(), 2001); err != nil {
+		t.Fatalf("AdminDisableUser returned error: %v", err)
+	}
+	if repo.updates["status"] != "disabled" {
+		t.Fatalf("expected disabled status, got %v", repo.updates)
+	}
+	if err := svc.AdminEnableUser(context.Background(), 2001); err != nil {
+		t.Fatalf("AdminEnableUser returned error: %v", err)
+	}
+	if repo.updates["status"] != "active" {
+		t.Fatalf("expected active status, got %v", repo.updates)
+	}
+}
+
+func TestDeleteRoleRejectsSystemRole(t *testing.T) {
+	repo := &mockRoleRepo{role: &Role{ID: 3001, IsSystem: true}}
+	svc := NewService(nil, nil, repo, nil, nil, nil)
+	if err := svc.DeleteRole(context.Background(), 3001); !errors.Is(err, errs.ErrForbidden) {
+		t.Fatalf("expected forbidden error, got %v", err)
+	}
+	if repo.deleted != 0 {
+		t.Fatalf("system role must not be deleted, got id %d", repo.deleted)
 	}
 }
 

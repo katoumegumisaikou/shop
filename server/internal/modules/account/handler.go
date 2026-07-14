@@ -568,5 +568,255 @@ func (h *Handler) UpdateAdmin(c *gin.Context) {
 }
 
 func (h *Handler) CreateAdmin(c *gin.Context) {
-	response.Error(c, errs.ErrServiceDegraded.WithMsg("尚未实现"))
+	var req CreateAdminReq
+	if err := c.ShouldBind(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	resp, err := h.svc.CreateAdmin(c.Request.Context(), &req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, resp)
+}
+
+func (h *Handler) DisableAdmin(c *gin.Context) {
+	adminID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	if err := h.svc.DisableAdmin(c.Request.Context(), adminID); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (h *Handler) EnableAdmin(c *gin.Context) {
+	adminID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	if err := h.svc.EnableAdmin(c.Request.Context(), adminID); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (h *Handler) ResetAdminPwd(c *gin.Context) {
+	var req ResetPwdReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	adminID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	if err := h.svc.ResetAdminPwd(c.Request.Context(), adminID, req.Password); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (h *Handler) ListRoles(c *gin.Context) {
+	roles, err := h.svc.ListRoles(c.Request.Context())
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, roles)
+}
+
+func (h *Handler) CreateRole(c *gin.Context) {
+	var req CreateRoleReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	role, err := h.svc.CreateRole(c.Request.Context(), &req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, role)
+}
+
+func (h *Handler) UpdateRole(c *gin.Context) {
+	roleID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	var req UpdateRoleReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	role, err := h.svc.UpdateRole(c.Request.Context(), roleID, &req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, role)
+}
+
+func (h *Handler) DeleteRole(c *gin.Context) {
+	roleID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	if err := h.svc.DeleteRole(c.Request.Context(), roleID); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (h *Handler) ListPermissions(c *gin.Context) {
+	permissions, err := h.svc.ListPermissions(c.Request.Context())
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, permissions)
+}
+
+func (h *Handler) AdminListUsers(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	users, total, err := h.svc.AdminListUsers(c.Request.Context(), page, size)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, gin.H{"list": users, "total": total, "page": page, "page_size": size})
+}
+
+func (h *Handler) AdminCreateUser(c *gin.Context) {
+	var req AdminCreateUserReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	user, err := h.svc.AdminCreateUser(c.Request.Context(), &req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, user)
+}
+
+func (h *Handler) AdminGetUser(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	user, err := h.svc.AdminGetUser(c.Request.Context(), userID)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, user)
+}
+
+func (h *Handler) AdminDisableUser(c *gin.Context) {
+	h.adminUpdateUserStatus(c, false)
+}
+
+func (h *Handler) AdminEnableUser(c *gin.Context) {
+	h.adminUpdateUserStatus(c, true)
+}
+
+func (h *Handler) adminUpdateUserStatus(c *gin.Context, enable bool) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	if enable {
+		err = h.svc.AdminEnableUser(c.Request.Context(), userID)
+	} else {
+		err = h.svc.AdminDisableUser(c.Request.Context(), userID)
+	}
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (h *Handler) AdminRechargeBalance(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errs.ErrInternal.WithMsg("错误用户id"))
+		return
+	}
+
+	var req AdminRechargeBalanceReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+
+	operatorID := c.GetInt64("admin_id")
+	if operatorID == 0 {
+		response.Error(c, errs.ErrUnauth)
+		return
+	}
+
+	if err := h.svc.AdminRechargeBalance(c.Request.Context(), id, req.AmountCents, operatorID, req.Remark); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+func (h *Handler) AdminListBalanceLogs(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+
+	logs, total, err := h.svc.AdminListBalanceLogs(c.Request.Context(), userID, page, size)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+
+	list := make([]BalanceLogResp, len(logs))
+	for i, l := range logs {
+		list[i] = BalanceLogResp{
+			ID:                 l.ID,
+			ChangeCents:        l.ChangeCents,
+			Type:               l.Type,
+			RefType:            l.RefType,
+			RefID:              l.RefID,
+			BalanceBeforeCents: l.BalanceBeforeCents,
+			BalanceAfterCents:  l.BalanceAfterCents,
+			Remark:             l.Remark,
+			CreatedAt:          l.CreatedAt,
+		}
+	}
+
+	response.OK(c, gin.H{
+		"list":      list,
+		"total":     total,
+		"page":      page,
+		"page_size": size,
+	})
 }

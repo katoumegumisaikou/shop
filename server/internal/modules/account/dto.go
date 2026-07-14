@@ -213,6 +213,64 @@ type CreateAdminReq struct {
 	Username string           `json:"username"  binding:"required"`
 	Password string           `json:"password"  binding:"required,min=6"`
 	RealName *string          `json:"real_name"`
-	Phone    *string          `json:"phone"`
+	Phone    string           `json:"phone"  binding:"required,min=11"`
 	RoleIDs  []types.Int64Str `json:"role_ids"`
+}
+
+// ResetPwdReq 重置密码请求。
+type ResetPwdReq struct {
+	Password string `json:"password" binding:"required,min=6"`
+}
+
+type RoleResp struct {
+	ID          types.Int64Str `json:"id"`
+	Code        string         `json:"code"`
+	Name        string         `json:"name"`
+	IsSystem    bool           `json:"is_system"`
+	Permissions []string       `json:"permissions"`
+	CreatedAt   time.Time      `json:"created_at"`
+}
+
+func toRoleResp(role *Role) RoleResp {
+	resp := RoleResp{
+		ID:          types.Int64Str(role.ID),
+		Code:        role.Code,
+		Name:        role.Name,
+		IsSystem:    role.IsSystem,
+		Permissions: make([]string, 0, len(role.Permissions)),
+		CreatedAt:   role.CreatedAt,
+	}
+	for _, permission := range role.Permissions {
+		resp.Permissions = append(resp.Permissions, permission.Code)
+	}
+	return resp
+}
+
+type CreateRoleReq struct {
+	Code        string   `json:"code" binding:"required"`
+	Name        string   `json:"name" binding:"required"`
+	Permissions []string `json:"permissions"`
+}
+
+type UpdateRoleReq struct {
+	Name        *string   `json:"name"`
+	Permissions *[]string `json:"permissions"`
+}
+
+type PermissionResp struct {
+	Code   string `json:"code"`
+	Module string `json:"module"`
+	Action string `json:"action"`
+	Name   string `json:"name"`
+}
+
+type AdminCreateUserReq struct {
+	Phone    string  `json:"phone" binding:"required,mobile"`
+	Password string  `json:"password" binding:"required,min=6"`
+	Nickname *string `json:"nickname"`
+}
+
+type AdminRechargeBalanceReq struct {
+	AmountCents int64  `json:"amount_cents" binding:"required,min=1"`
+	Remark      string `json:"remark"       binding:"omitempty,max=200"`
 }
