@@ -1,2 +1,19 @@
 .omc/
 .claude/
+CLAUDE.md
+Agent.md
+
+# Frontend dependencies and build outputs
+client/node_modules/
+client/dist/
+client/.temp/
+client/.cache/
+client/coverage/
+
+# Frontend local environment and logs
+client/.env.local
+client/.env.*.local
+client/npm-debug.log*
+client/yarn-debug.log*
+client/yarn-error.log*
+client/pnpm-debug.log*
