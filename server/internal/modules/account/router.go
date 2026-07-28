@@ -34,7 +34,7 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, rdb *redis.Client, db *gorm.
 		auth.POST("/refresh", h.RefreshToken)
 		auth.POST("/logout", sensitive, userAuth, userLimiter, h.Logout)
 		auth.POST("/phone-register", h.RegisterByPhone)
-		auth.POST("/reset-password", userAuth, h.ResetPassword)
+		auth.POST("/reset-password", h.ResetPassword)
 		auth.POST("/phone-login", h.PhoneLogin)
 
 		// GET /c/me 可选认证：已登录返回用户信息，未登录返回 null（200）

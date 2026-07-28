@@ -189,14 +189,22 @@ func (s *Service) checkSmsCodeDependencies() error {
 	return nil
 }
 
-// LoginResult 登录结果。
-type LoginResult struct {
+// TokenPair 令牌对，包含 access_token 和 refresh_token 的原始数据。
+type TokenPair struct {
 	AccessToken      string
 	RefreshToken     string
-	UserID           int64
 	ExpiresIn        int64 // access_token 剩余有效期，单位秒
 	RefreshExpiresIn int64 // refresh_token 剩余有效期，单位秒
 }
+
+// LoginResult 登录/注册结果。
+type LoginResult struct {
+	TokenPair
+	UserID           int64
+	User             *User
+}
+
+type RegisterResult LoginResult
 
 // MpLogin 小程序登录（code2session → upsert → 签发 JWT）。
 func (s *Service) MpLogin(ctx context.Context, code string) (*LoginResult, error) {
@@ -241,11 +249,15 @@ func (s *Service) MpLogin(ctx context.Context, code string) (*LoginResult, error
 	}
 
 	// 发放 token
-	return s.signUserToken(u.ID)
+	t, err := s.signUserToken(u.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{TokenPair: *t, UserID: u.ID}, nil
 }
 
 // signUserToken 签署 UserToken
-func (s *Service) signUserToken(id int64) (*LoginResult, error) {
+func (s *Service) signUserToken(id int64) (*TokenPair, error) {
 	// accessToken 签署
 	userCfg := s.userCfg
 	accessClaim := &pkgjwt.Claims{
@@ -276,17 +288,16 @@ func (s *Service) signUserToken(id int64) (*LoginResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &LoginResult{
+	return &TokenPair{
 		AccessToken:      accessToken,
 		RefreshToken:     refreshToken,
-		UserID:           id,
 		ExpiresIn:        int64(s.userCfg.Expiration.Seconds()),
 		RefreshExpiresIn: int64(s.userCfg.RefreshExpiration.Seconds()),
 	}, nil
 }
 
 // signAdminToken 签署 AdminToken
-func (s *Service) signAdminToken(id int64, roles, perms []string) (*LoginResult, error) {
+func (s *Service) signAdminToken(id int64, roles, perms []string) (*TokenPair, error) {
 	accessClaims := &pkgjwt.Claims{
 		Sub:   id,
 		Type:  "admin",
@@ -320,10 +331,9 @@ func (s *Service) signAdminToken(id int64, roles, perms []string) (*LoginResult,
 		return nil, err
 	}
 
-	return &LoginResult{
+	return &TokenPair{
 		AccessToken:      accessToken,
 		RefreshToken:     refreshToken,
-		UserID:           id,
 		ExpiresIn:        int64(s.adminCfg.Expiration.Seconds()),
 		RefreshExpiresIn: int64(s.adminCfg.RefreshExpiration.Seconds()),
 	}, nil
@@ -372,7 +382,11 @@ func (s *Service) H5Callback(ctx context.Context, code string) (*H5CallbackResul
 		return nil, errs.ErrInternal
 	}
 
-	return s.signUserToken(found.ID)
+	t, err := s.signUserToken(found.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{TokenPair: *t, UserID: found.ID}, nil
 }
 
 // BindPhone 解密微信数据包并绑定手机号。
@@ -426,7 +440,11 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (*Login
 		return nil, err
 	}
 
-	return s.signUserToken(claims.Sub)
+	t, err := s.signUserToken(claims.Sub)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{TokenPair: *t, UserID: claims.Sub}, nil
 }
 
 func (s *Service) Logout(ctx context.Context, accessToken, refreshToken string) error {
@@ -556,7 +574,11 @@ func (s *Service) RegisterByPhone(ctx context.Context, phone, password, code str
 	if err := s.userRepo.Create(ctx, u); err != nil {
 		return nil, err
 	}
-	return s.signUserToken(u.ID)
+	t, err := s.signUserToken(u.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{TokenPair: *t, UserID: u.ID}, nil
 }
 
 // ResetPassword 重置密码。
@@ -607,11 +629,14 @@ func (s *Service) ResetPassword(ctx context.Context, phone, password, code, acce
 	if err != nil {
 		return nil, err
 	}
-
 	_ = s.blacklistTokenClaims(ctx, accessClaims)
 	_ = s.blacklistTokenClaims(ctx, refreshClaims)
+	t, err := s.signUserToken(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{TokenPair: *t, UserID: user.ID}, nil
 
-	return s.signUserToken(user.ID)
 }
 
 // 允许的密码特殊符号（键盘上可见的符号）
@@ -892,7 +917,7 @@ func (s *Service) AdminLogin(ctx context.Context, loginReq *AdminLoginReq, ip, u
 			return nil, errs.ErrInternal.WithMsg("账号被锁定")
 		}
 		s.adminRepo.Update(ctx, admin.ID, updates)
-		return nil, errs.ErrInternal.WithMsg("密码或账号错误")
+	return nil, errs.ErrInternal.WithMsg("密码或账号错误")
 	}
 
 	// 重置失败次数
@@ -906,9 +931,12 @@ func (s *Service) AdminLogin(ctx context.Context, loginReq *AdminLoginReq, ip, u
 	permCodes, _ := s.roleRepo.GetAdminPermCodes(ctx, admin.ID)
 	roleCodes, _ := s.roleRepo.GetAdminRoleCodes(ctx, admin.ID)
 
-	return s.signAdminToken(admin.ID, roleCodes, permCodes)
+	t, err := s.signAdminToken(admin.ID, roleCodes, permCodes)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{TokenPair: *t, UserID: admin.ID}, nil
 }
-
 func (s *Service) AdminLoginout(ctx context.Context, accessToken, refreshToken string) error {
 	accessClaims, _ := pkgjwt.Parse(s.adminCfg.JwtSecret, accessToken)
 	refreshClaims, _ := pkgjwt.Parse(s.adminCfg.JwtSecret, refreshToken)

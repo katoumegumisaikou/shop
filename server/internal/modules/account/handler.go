@@ -199,10 +199,7 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 
 	c.SetCookie(userAccessTokenCookieName, result.AccessToken, int(result.ExpiresIn), userAccessTokenCookiePath, "", h.isProd, true)
 	c.SetCookie(userRefreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), userRefreshTokenCookiePath, "", h.isProd, true)
-	response.OK(c, gin.H{
-		"access_token": result.AccessToken,
-		"expires_in":   result.ExpiresIn,
-	})
+	response.OK(c, nil)
 }
 
 func (h *Handler) Logout(c *gin.Context) {
@@ -311,7 +308,7 @@ func (h *Handler) PhoneLogin(c *gin.Context) {
 
 	c.SetCookie(userAccessTokenCookieName, result.AccessToken, int(result.AccessExpiresIn), userAccessTokenCookiePath, "", h.isProd, true)
 	c.SetCookie(userRefreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), userRefreshTokenCookiePath, "", h.isProd, true)
-	response.OK(c, result)
+	response.OK(c, gin.H{"user": result.User})
 }
 
 func (h *Handler) GetMe(c *gin.Context) {
@@ -445,17 +442,12 @@ func (h *Handler) AdminLogin(c *gin.Context) {
 	}
 
 	resp := &AdminLoginResponse{
-		AdminID:          result.UserID,
-		AccessToken:      result.AccessToken,
-		AccessExpiresIn:  result.ExpiresIn,
-		RefreshToken:     result.RefreshToken,
-		RefreshExpiresIn: result.RefreshExpiresIn,
-		TokenType:        "Bearer",
+		AdminID: result.UserID,
 	}
 	c.SetCookie(
 		adminAccessTokenCookieName,
-		resp.AccessToken,
-		int(resp.AccessExpiresIn),
+		result.AccessToken,
+		int(result.ExpiresIn),
 		adminAccessTokenCookiePath,
 		"",
 		h.isProd,
@@ -463,8 +455,8 @@ func (h *Handler) AdminLogin(c *gin.Context) {
 	)
 	c.SetCookie(
 		adminRefreshTokenCookieName,
-		resp.RefreshToken,
-		int(resp.RefreshExpiresIn),
+		result.RefreshToken,
+		int(result.RefreshExpiresIn),
 		adminRefreshTokenCookiePath,
 		"",
 		h.isProd,

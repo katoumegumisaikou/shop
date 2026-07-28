@@ -84,6 +84,8 @@ type PhoneLoginResp struct {
 	User             *UserResp `json:"user"`
 }
 
+type PhoneRegisterResp PhoneLoginResp
+
 // UserResp 用户信息响应。
 type UserResp struct {
 	ID           types.Int64Str `json:"id"`
@@ -167,12 +169,7 @@ type AdminLoginReq struct {
 
 // AdminLoginResponse 登录回复
 type AdminLoginResponse struct {
-	AccessToken      string `json:"access_token"`       // 访问接口使用的短期 token
-	RefreshToken     string `json:"refresh_token"`      // 刷新 access token 使用的长期 token
-	TokenType        string `json:"token_type"`         // token 类型，固定为 Bearer
-	AccessExpiresIn  int64  `json:"expires_in"`         // access token 剩余有效期，单位秒
-	RefreshExpiresIn int64  `json:"refresh_expires_in"` // refresh token 剩余有效期，单位秒
-	AdminID          int64  `json:"admin_id"`           // 当前登录管理员 ID
+	AdminID int64 `json:"admin_id"` // 当前登录管理员 ID
 }
 
 // AdminResp 管理员信息响应。

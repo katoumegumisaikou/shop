@@ -11,20 +11,40 @@ export interface User {
 }
 
 export interface LoginResult {
-  access_token: string
-  refresh_token: string
-  expires_in: number
-  refresh_expires_in: number
   user: User
 }
 
-export function login(phone: string, password: string) {
+export interface RegisterResult {
+  user: User
+}
+
+export interface SendSmsCode {
+  code: string
+  expiresIn: number
+}
+
+export async function phoneLogin(phone: string, password: string) {
   return request<LoginResult>('/c/auth/phone-login', {
     method: 'POST',
     data: { phone, password },
   })
 }
 
-export function getMe() {
+export async function sendSmsCode(phone: string, purpose: string) {
+  return request<SendSmsCode>('/c/auth/sms/code', {
+    method: 'POST',
+    data: { phone, purpose }
+  })
+}
+
+export async function resetPassword(phone: string, code: string, password: string) {
+  return request<void>('/c/auth/reset-password', {
+    method: 'POST',
+    auth: true,
+    data: { phone, code, password }
+  })
+}
+
+export async function getMe() {
   return request<User | null>('/c/me', { auth: true })
 }
