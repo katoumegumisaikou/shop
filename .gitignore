@@ -1,5 +1,6 @@
 .omc/
 .claude/
+.vscode/
 CLAUDE.md
 Agent.md
 
@@ -9,6 +10,7 @@ client/dist/
 client/.temp/
 client/.cache/
 client/coverage/
+client/.swc/
 
 # Frontend local environment and logs
 client/.env.local
