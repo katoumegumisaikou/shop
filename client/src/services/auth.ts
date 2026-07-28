@@ -20,24 +20,31 @@ export interface RegisterResult {
 
 export interface SendSmsCode {
   code: string
-  expiresIn: number
+  expires_in: number
 }
 
-export async function phoneLogin(phone: string, password: string) {
+export async function PhoneLogin(phone: string, password: string) {
   return request<LoginResult>('/c/auth/phone-login', {
     method: 'POST',
     data: { phone, password },
   })
 }
 
-export async function sendSmsCode(phone: string, purpose: string) {
+export async function RegisterByPhone(phone: string, password: string, code: string) {
+  return request<RegisterResult>('/c/auth/phone-register', {
+    method: 'POST',
+    data: { phone, password, code }
+  })
+}
+
+export async function SendSmsCode(phone: string, purpose: string) {
   return request<SendSmsCode>('/c/auth/sms/code', {
     method: 'POST',
     data: { phone, purpose }
   })
 }
 
-export async function resetPassword(phone: string, code: string, password: string) {
+export async function ResetPassword(phone: string, code: string, password: string) {
   return request<void>('/c/auth/reset-password', {
     method: 'POST',
     auth: true,
@@ -45,6 +52,6 @@ export async function resetPassword(phone: string, code: string, password: strin
   })
 }
 
-export async function getMe() {
+export async function GetMe() {
   return request<User | null>('/c/me', { auth: true })
 }
