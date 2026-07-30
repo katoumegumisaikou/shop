@@ -21,11 +21,9 @@ type User struct {
 	DeactivateAt    *time.Time `gorm:"column:deactivate_at"`      // 软注销
 	InvitedByUserID *int64     `gorm:"column:invited_by_user_id"` // 邀请人
 	DistributorID   *int64     `gorm:"column:distributor_id"`     // 分销员id
-	Points          int        `gorm:"column:points;default:0"`
 	BalanceCents    int64      `gorm:"column:balance_cents;not null;default:0"` // 余额，以分为单位，避免小数计算
 	CreatedAt       time.Time  `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt       time.Time  `gorm:"column:updated_at;autoUpdateTime"`
-	DeletedAt       *time.Time `gorm:"index"`
 }
 
 // TableName 对应 PostgreSQL 的 "user" 表（关键字需加引号）。

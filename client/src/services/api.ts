@@ -1,6 +1,7 @@
 import Taro from '@tarojs/taro'
 
 const TOKEN_KEY = 'access_token'
+const REFRESH_TOKEN_KEY = 'refresh_token'
 
 function getToken(): string | null {
   try {
@@ -10,13 +11,26 @@ function getToken(): string | null {
   }
 }
 
+function getRefreshToken(): string | null {
+  try {
+    return Taro.getStorageSync(REFRESH_TOKEN_KEY) || null
+  } catch {
+    return null
+  }
+}
+
 export function setToken(token: string) {
   Taro.setStorageSync(TOKEN_KEY, token)
+}
+
+export function setRefreshToken(token: string) {
+  Taro.setStorageSync(REFRESH_TOKEN_KEY, token)
 }
 
 export function removeToken() {
   try {
     Taro.removeStorageSync(TOKEN_KEY)
+    Taro.removeStorageSync(REFRESH_TOKEN_KEY)
   } catch {
     // 忽略清理失败
   }

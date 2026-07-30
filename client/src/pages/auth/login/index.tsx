@@ -3,36 +3,47 @@ import { Button, Input, Text, View } from '@tarojs/components'
 import Taro from '@tarojs/taro'
 
 import './index.scss'
+import { MpLogin, PhoneLogin } from '@/services/auth'
+import { setToken, setRefreshToken } from '@/services/api'
+import { isH5 } from '@/utils/env'
 
 export default function LoginPage() {
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState<boolean>(false)
+  const [loading, setLoading] = useState(false)
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!/^1\d{10}$/.test(phone)) {
-      Taro.showToast({
-        title: '请输入正确的手机号',
-        icon: 'none',
-      })
+      Taro.showToast({ title: '请输入正确的手机号', icon: 'none' })
       return
     }
 
     if (password.length < 6) {
-      Taro.showToast({
-        title: '密码不能少于 6 位',
-        icon: 'none',
-      })
+      Taro.showToast({ title: '密码不能少于 6 位', icon: 'none' })
       return
     }
 
-    // 设置登录状态，避免重复点击
     setLoading(true)
 
-    // todo: 这里去请求后端接口
-    Taro.showToast({title:'登录成功',icon:'success',duration:1000})
+    try {
+      if (isH5()) {
+        // H5：手机号密码登录，token 由 Set-Cookie 自动管理，前端无需处理
+        await PhoneLogin(phone, password)
+      } else {
+        // 小程序：微信授权登录，手动存储 token
+        const loginRes = await Taro.login()
+        const res = await MpLogin(loginRes.code)
+        setToken(res.access_token)
+        setRefreshToken(res.refresh_token)
+      }
 
-    setLoading(false)
+      Taro.showToast({ title: '登录成功', icon: 'success', duration: 1000 })
+      Taro.switchTab({ url: '/pages/index/index' })
+    } catch (err: any) {
+      Taro.showToast({ title: err.message || '登录失败', icon: 'none' })
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -69,8 +80,8 @@ export default function LoginPage() {
 
           <Button className='login-card__submit'
             onClick={handleLogin}
-            loading={loading}    
-            disabled={loading}   
+            loading={loading}
+            disabled={loading}
           >
             登录
           </Button>

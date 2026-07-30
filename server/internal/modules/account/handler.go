@@ -269,7 +269,7 @@ func (h *Handler) RegisterByPhone(c *gin.Context) {
 
 	c.SetCookie(userAccessTokenCookieName, result.AccessToken, int(result.ExpiresIn), userAccessTokenCookiePath, "", h.isProd, true)
 	c.SetCookie(userRefreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), userRefreshTokenCookiePath, "", h.isProd, true)
-	response.OK(c, gin.H{"user": result.User})
+	response.OK(c, gin.H{"user": ToUserResp(result.User)})
 }
 
 func (h *Handler) ResetPassword(c *gin.Context) {

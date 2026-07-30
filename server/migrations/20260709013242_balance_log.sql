@@ -19,10 +19,6 @@ CREATE TABLE IF NOT EXISTS balance_log (
 );
 CREATE INDEX IF NOT EXISTS idx_balance_log_user_id ON balance_log(user_id);
 
--- 订单余额支付字段
-ALTER TABLE "order" ADD COLUMN IF NOT EXISTS balance_pay_cents BIGINT NOT NULL DEFAULT 0;
-
 -- +goose Down
-ALTER TABLE "order" DROP COLUMN IF EXISTS balance_pay_cents;
 DROP TABLE IF EXISTS balance_log;
 ALTER TABLE "user" DROP COLUMN IF EXISTS balance_cents;

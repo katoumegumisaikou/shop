@@ -10,12 +10,21 @@ export interface User {
   created_at: string
 }
 
-export interface LoginResult {
+export interface H5LoginResult {
   user: User
 }
 
-export interface RegisterResult {
+export interface H5RegisterResult {
   user: User
+}
+
+export interface MpLoginResult {
+  access_token: string
+  refresh_token: string
+  token_type: string
+  expires_in: number
+  refresh_expires_in: number
+  user_id: string
 }
 
 export interface SendSmsCode {
@@ -23,15 +32,22 @@ export interface SendSmsCode {
   expires_in: number
 }
 
+export async function MpLogin(code: string) {
+  return request<MpLoginResult>('/c/auth/mp-login', {
+    method: 'POST',
+    data: { code },
+  })
+}
+
 export async function PhoneLogin(phone: string, password: string) {
-  return request<LoginResult>('/c/auth/phone-login', {
+  return request<H5LoginResult>('/c/auth/phone-login', {
     method: 'POST',
     data: { phone, password },
   })
 }
 
 export async function RegisterByPhone(phone: string, password: string, code: string) {
-  return request<RegisterResult>('/c/auth/phone-register', {
+  return request<H5RegisterResult>('/c/auth/phone-register', {
     method: 'POST',
     data: { phone, password, code }
   })

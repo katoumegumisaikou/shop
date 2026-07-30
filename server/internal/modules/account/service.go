@@ -578,7 +578,7 @@ func (s *Service) RegisterByPhone(ctx context.Context, phone, password, code str
 	if err != nil {
 		return nil, err
 	}
-	return &LoginResult{TokenPair: *t, UserID: u.ID}, nil
+	return &LoginResult{TokenPair: *t, UserID: u.ID, User: u}, nil
 }
 
 // ResetPassword 重置密码。
