@@ -19,3 +19,9 @@ client/npm-debug.log*
 client/yarn-debug.log*
 client/yarn-error.log*
 client/pnpm-debug.log*
+
+# Go binaries and IDE files
+server/api
+server/main
+server/**/api
+server/**/main
