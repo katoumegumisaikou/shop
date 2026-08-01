@@ -88,8 +88,14 @@ export default function LoginPage() {
         </View>
 
         <View className='login-card__actions'>
-          <View className='login-card__link'>还没有账号？请先注册</View>
-          <View className='login-card__link login-card__link--forgot'>忘记密码</View>
+          <View
+            className='login-card__link'
+            onClick={() => Taro.navigateTo({ url: '/pages/auth/register/index' })}
+          >还没有账号？请先注册</View>
+          <View
+            className='login-card__link login-card__link--forgot'
+            onClick={() => Taro.navigateTo({ url: '/pages/auth/reset-password/index' })}
+          >忘记密码</View>
         </View>
       </View>
     </View>
