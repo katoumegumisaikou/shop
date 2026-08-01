@@ -199,7 +199,12 @@ func (h *Handler) RefreshToken(c *gin.Context) {
 
 	c.SetCookie(userAccessTokenCookieName, result.AccessToken, int(result.ExpiresIn), userAccessTokenCookiePath, "", h.isProd, true)
 	c.SetCookie(userRefreshTokenCookieName, result.RefreshToken, int(result.RefreshExpiresIn), userRefreshTokenCookiePath, "", h.isProd, true)
-	response.OK(c, nil)
+	response.OK(c, gin.H{
+		"access_token":       result.AccessToken,
+		"refresh_token":      result.RefreshToken,
+		"expires_in":         result.ExpiresIn,
+		"refresh_expires_in": result.RefreshExpiresIn,
+	})
 }
 
 func (h *Handler) Logout(c *gin.Context) {
