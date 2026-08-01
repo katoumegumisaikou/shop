@@ -27,7 +27,6 @@ export default function LoginPage() {
 
     try {
       if (isH5()) {
-        // H5：手机号密码登录，token 由 Set-Cookie 自动管理，前端无需处理
         await PhoneLogin(phone, password)
       } else {
         // 小程序：微信授权登录，手动存储 token
@@ -37,8 +36,8 @@ export default function LoginPage() {
         setRefreshToken(res.refresh_token)
       }
 
-      Taro.showToast({ title: '登录成功', icon: 'success', duration: 1000 })
-      Taro.switchTab({ url: '/pages/index/index' })
+      // H5：直接改 hash 跳转
+      window.location.hash = '#/pages/index/index'
     } catch (err: any) {
       Taro.showToast({ title: err.message || '登录失败', icon: 'none' })
     } finally {
