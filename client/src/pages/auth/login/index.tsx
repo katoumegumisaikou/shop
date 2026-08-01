@@ -36,8 +36,7 @@ export default function LoginPage() {
         setRefreshToken(res.refresh_token)
       }
 
-      // H5：直接改 hash 跳转
-      window.location.hash = '#/pages/index/index'
+      Taro.redirectTo({ url: '/pages/index/index' })
     } catch (err: any) {
       Taro.showToast({ title: err.message || '登录失败', icon: 'none' })
     } finally {
