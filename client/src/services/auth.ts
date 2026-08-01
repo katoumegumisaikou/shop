@@ -53,6 +53,20 @@ export async function RegisterByPhone(phone: string, password: string, code: str
   })
 }
 
+export interface RefreshTokenResult {
+  access_token: string
+  refresh_token: string
+  expires_in: number
+  refresh_expires_in: number
+}
+
+export async function RefreshToken(refreshToken: string) {
+  return request<RefreshTokenResult>('/c/auth/refresh', {
+    method: 'POST',
+    data: { refresh_token: refreshToken },
+  })
+}
+
 export async function SendSmsCode(phone: string, purpose: string) {
   return request<SendSmsCode>('/c/auth/sms/code', {
     method: 'POST',

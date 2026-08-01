@@ -1,3 +1,4 @@
+import { isH5 } from '@/utils/env'
 import Taro from '@tarojs/taro'
 
 const TOKEN_KEY = 'access_token'
@@ -18,6 +19,9 @@ function getRefreshToken(): string | null {
     return null
   }
 }
+
+// 是否正在刷新 token，避免并发请求同时刷新
+let isRefreshing = false
 
 export function setToken(token: string) {
   Taro.setStorageSync(TOKEN_KEY, token)
@@ -66,6 +70,51 @@ function buildURL(path: string, params?: Record<string, string | number | undefi
   return `${BASE_URL}${path}?${parts.join('&')}`
 }
 
+async function refreshToken(): Promise<boolean> {
+  // 防并发的多个请求同时刷新
+  if (isRefreshing) return false
+  isRefreshing = true
+
+  try {
+    if (isH5()) {
+      // H5：refresh_token 在 cookie 中，后端自动读取并更新 cookie
+      await Taro.request({
+        url: buildURL('/c/auth/refresh'),
+        method: 'POST',
+        header: { 'Content-Type': 'application/json' },
+      })
+      return true
+    } else {
+      // 小程序：手动读取 refresh_token，调接口换新 token
+      const refreshTokenStr = getRefreshToken()
+      if (!refreshTokenStr) return false
+
+      const res = await Taro.request<ApiResponse<{
+        access_token: string
+        refresh_token: string
+        expires_in: number
+        refresh_expires_in: number
+      }>>({
+        url: buildURL('/c/auth/refresh'),
+        method: 'POST',
+        header: { 'Content-Type': 'application/json' },
+        data: JSON.stringify({ refresh_token: refreshTokenStr }),
+      })
+
+      const body = res.data
+      if (body.code !== 0) return false
+
+      setToken(body.data.access_token)
+      setRefreshToken(body.data.refresh_token)
+      return true
+    }
+  } catch {
+    return false
+  } finally {
+    isRefreshing = false
+  }
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', data, auth = false, params, header = {} } = options
 
@@ -96,8 +145,29 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const body = res.data
 
   if (body.code !== 0) {
-    // 401 未授权，清除 token 并跳转登录
+    // 401：尝试刷新 token 后重试一次
     if (body.code === 401) {
+      if (await refreshToken()) {
+        // 刷新成功，用新 token 重试原请求
+        if (auth) {
+          const newToken = getToken()
+          if (newToken) {
+            header['Authorization'] = `Bearer ${newToken}`
+          }
+        }
+        try {
+          res = await Taro.request<ApiResponse<T>>({
+            url: buildURL(path, params),
+            method,
+            data: method === 'GET' ? undefined : JSON.stringify(data),
+            header,
+          })
+          const retryBody = res.data
+          if (retryBody.code === 0) return retryBody.data
+        } catch {
+          throw new Error('网络异常，请检查网络连接后重试')
+        }
+      }
       removeToken()
       Taro.redirectTo({ url: '/pages/auth/login/index' })
       throw new Error('未登录')
