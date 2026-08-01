@@ -36,7 +36,7 @@ export default function LoginPage() {
         setRefreshToken(res.refresh_token)
       }
 
-      Taro.redirectTo({ url: '/pages/index/index' })
+      Taro.reLaunch({ url: '/pages/index/index' })
     } catch (err: any) {
       Taro.showToast({ title: err.message || '登录失败', icon: 'none' })
     } finally {
