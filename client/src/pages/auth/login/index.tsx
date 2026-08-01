@@ -36,7 +36,8 @@ export default function LoginPage() {
         setRefreshToken(res.refresh_token)
       }
 
-      Taro.reLaunch({ url: '/pages/index/index' })
+      // 浏览器原生跳转，不依赖 Taro 路由
+      window.location.href = window.location.origin + '/#/pages/index/index'
     } catch (err: any) {
       Taro.showToast({ title: err.message || '登录失败', icon: 'none' })
     } finally {
