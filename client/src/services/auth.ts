@@ -2,6 +2,7 @@ import { request } from './api'
 
 export interface User {
   id: string
+  phone: string | null
   nickname: string | null
   avatar: string | null
   gender: number
