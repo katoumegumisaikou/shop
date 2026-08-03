@@ -123,11 +123,17 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (auth) {
     const token = getToken()
     if (!token) {
-      // 需要登录但没有 token，跳转到登录页
-      Taro.redirectTo({ url: '/pages/auth/login/index' })
-      throw new Error('未登录')
+      if (isH5()) {
+        // H5：token 在 HttpOnly cookie 中，JS 不可读，由浏览器自动携带
+        // 不做拦截，交给后端判断
+      } else {
+        // 小程序：localStorage 中没有 token，跳登录
+        Taro.redirectTo({ url: '/pages/auth/login/index' })
+        throw new Error('未登录')
+      }
+    } else {
+      header['Authorization'] = `Bearer ${token}`
     }
-    header['Authorization'] = `Bearer ${token}`
   }
 
   let res: Taro.request.SuccessCallbackResult<ApiResponse<T>>
