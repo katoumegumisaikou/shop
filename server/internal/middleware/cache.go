@@ -10,8 +10,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// PublicCache 为只读接口写 Cache-Control 响应头。
-// maxAge: max-age 秒；swr: stale-while-revalidate 秒（0 则不加）。
+// PublicCache 为只读接口设置 Cache-Control 响应头，控制浏览器/CDN 缓存行为。
+//
+// 参数：
+//
+//	maxAge —— 缓存有效时长（秒），超过后缓存过期需重新验证
+//	swr   —— stale-while-revalidate 时长（秒），过期后仍可用旧缓存，同时后台刷新
+//
+// 示例：
+//
+//	PublicCache(60, 0)   → Cache-Control: public, max-age=60           // 严格 60 秒
+//	PublicCache(60, 30)  → Cache-Control: public, max-age=60, stale-while-revalidate=30
+//	PublicCache(0, 0)    → Cache-Control: no-cache                     // 每次必须验证
 func PublicCache(maxAge, swr int) gin.HandlerFunc {
 	var cacheHeader string
 	if maxAge <= 0 && swr <= 0 {
@@ -78,6 +88,15 @@ func (w *captureWriter) flushCaptured(etagString string) (int, error) {
 	}
 }
 
+// ETagMiddleware 实现基于 ETag 的 HTTP 条件请求校验，减少不必要的数据传输。
+//
+// 工作流程：
+//  1. 拦截 handler 的响应，计算 body 的哈希作为 ETag
+//  2. 与请求头 If-None-Match 对比：
+//     匹配 → 返回 304 Not Modified（body 为空，省流量）
+//     不匹配 → 正常返回 body + ETag 响应头
+//
+// 仅处理 GET 请求，非 GET 直接放行。
 func ETagMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 不是 GET 方法的直接跳过
