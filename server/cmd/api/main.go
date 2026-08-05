@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
 	"regexp"
+	"runtime/debug"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -14,12 +14,14 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"shop/internal/middleware"
 	"shop/internal/modules/account"
 	pkgjwt "shop/internal/pkg/jwt"
+	"shop/internal/pkg/logger"
 	"shop/internal/pkg/snowflake"
 	"shop/internal/pkg/wxlogin"
 )
@@ -32,6 +34,14 @@ func getEnv(key, fallback string) string {
 }
 
 func main() {
+	appLogger, err := logger.New(getEnv("APP_ENV", "dev"), getEnv("LOG_LEVEL", "info"))
+	if err != nil {
+		panic(err)
+	}
+	defer logger.Sync(appLogger)
+
+	appLogger.Info("starting application")
+
 	// 1. 初始化雪花 ID 生成器
 	snowflake.Init(1)
 
@@ -48,7 +58,7 @@ func main() {
 		"host=localhost user=shop password=shop dbname=shop port=5432 sslmode=disable TimeZone=Asia/Shanghai")
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
-		log.Fatalf("connect postgres: %v", err)
+		appLogger.Fatal("connect postgres", zap.Error(err))
 	}
 
 	// 4. 连接 Redis
@@ -56,7 +66,7 @@ func main() {
 		Addr: getEnv("REDIS_ADDR", "localhost:6379"),
 	})
 	if err := rdb.Ping(ctx).Err(); err != nil {
-		log.Fatalf("connect redis: %v", err)
+		appLogger.Fatal("connect redis", zap.Error(err))
 	}
 
 	// 5. 微信登录客户端（小程序 + 公众号，dev 阶段无真实 key 也可启动）
@@ -73,7 +83,7 @@ func main() {
 	userRepo := account.NewUserRepo(db)
 	adminRepo := account.NewAdminRepo(db)
 	roleRepo := account.NewRoleRepo(db)
-	svc := account.NewService(userRepo, adminRepo, roleRepo, rdb, wxMP, wxOA)
+	svc := account.NewService(userRepo, adminRepo, roleRepo, rdb, wxMP, wxOA, appLogger)
 
 	userCfg := pkgjwt.GetUserConfig()
 	adminCfg := pkgjwt.GetAdminConfig()
@@ -81,7 +91,15 @@ func main() {
 	handler := account.NewHandler(svc, userCfg, adminCfg, isProd, nil)
 
 	// 7. 注册路由
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, recovered any) {
+		appLogger.Error("panic recovered",
+			zap.Any("panic", recovered),
+			zap.ByteString("stack", debug.Stack()),
+		)
+		c.AbortWithStatus(http.StatusInternalServerError)
+	}))
+	r.Use(middleware.AccessLog(appLogger))
 
 	// CORS 跨域配置（允许前端 dev server 访问）
 	r.Use(cors.New(cors.Config{
@@ -112,8 +130,8 @@ func main() {
 
 	// 8. 启动
 	addr := getEnv("LISTEN_ADDR", ":8080")
-	log.Printf("server starting on %s", addr)
+	appLogger.Info("server starting", zap.String("addr", addr))
 	if err := r.Run(addr); err != nil {
-		log.Fatalf("server: %v", err)
+		appLogger.Fatal("server stopped unexpectedly", zap.Error(err))
 	}
 }

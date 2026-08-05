@@ -16,6 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
@@ -62,6 +63,7 @@ type Service struct {
 	wxMP      wxlogin.WxLoginClient // 小程序
 	wxOA      wxlogin.WxLoginClient // 公众号
 	env       string                // APP_ENV：dev/staging/prod
+	logger    *zap.Logger
 }
 
 // NewService 构造 Service。
@@ -71,7 +73,12 @@ func NewService(
 	roleRepo RoleRepo,
 	rdb *redis.Client,
 	wxMP, wxOA wxlogin.WxLoginClient,
+	loggers ...*zap.Logger,
 ) *Service {
+	appLogger := zap.NewNop()
+	if len(loggers) > 0 && loggers[0] != nil {
+		appLogger = loggers[0]
+	}
 	return &Service{
 		userRepo:  userRepo,
 		roleRepo:  roleRepo,
@@ -82,8 +89,23 @@ func NewService(
 		adminCfg:  pkgjwt.GetAdminConfig(),
 		wxMP:      wxMP,
 		wxOA:      wxOA,
+		logger:    appLogger,
 		// env:      cfg.App.Env,
 	}
+}
+
+func (s *Service) log() *zap.Logger {
+	if s != nil && s.logger != nil {
+		return s.logger
+	}
+	return zap.NewNop()
+}
+
+func maskPhone(phone string) string {
+	if len(phone) < 7 {
+		return "***"
+	}
+	return phone[:3] + "****" + phone[len(phone)-4:]
 }
 
 // checkMpLoginDependencies 检查小程序登录链路运行所需的依赖。
@@ -200,8 +222,8 @@ type TokenPair struct {
 // LoginResult 登录/注册结果。
 type LoginResult struct {
 	TokenPair
-	UserID           int64
-	User             *User
+	UserID int64
+	User   *User
 }
 
 type RegisterResult LoginResult
@@ -214,6 +236,7 @@ func (s *Service) MpLogin(ctx context.Context, code string) (*LoginResult, error
 
 	resp, err := s.wxMP.Code2Session(ctx, code)
 	if err != nil {
+		s.log().Warn("mp login code2session failed", zap.Error(err))
 		return nil, errs.ErrSessionExpired
 	}
 
@@ -251,8 +274,10 @@ func (s *Service) MpLogin(ctx context.Context, code string) (*LoginResult, error
 	// 发放 token
 	t, err := s.signUserToken(u.ID)
 	if err != nil {
+		s.log().Error("mp login sign token failed", zap.Int64("user_id", u.ID), zap.Error(err))
 		return nil, err
 	}
+	s.log().Info("mp login succeeded", zap.Int64("user_id", u.ID))
 	return &LoginResult{TokenPair: *t, UserID: u.ID}, nil
 }
 
@@ -354,6 +379,7 @@ func (s *Service) H5Callback(ctx context.Context, code string) (*H5CallbackResul
 
 	resp, err := s.wxOA.OAuthCode2Token(ctx, code)
 	if err != nil {
+		s.log().Warn("h5 oauth login failed", zap.Error(err))
 		return nil, errs.ErrSessionExpired
 	}
 
@@ -384,8 +410,10 @@ func (s *Service) H5Callback(ctx context.Context, code string) (*H5CallbackResul
 
 	t, err := s.signUserToken(found.ID)
 	if err != nil {
+		s.log().Error("h5 login sign token failed", zap.Int64("user_id", found.ID), zap.Error(err))
 		return nil, err
 	}
+	s.log().Info("h5 login succeeded", zap.Int64("user_id", found.ID))
 	return &LoginResult{TokenPair: *t, UserID: found.ID}, nil
 }
 
@@ -423,6 +451,7 @@ func (s *Service) BindPhone(ctx context.Context, userID int64, encryptedData, iv
 	if err := s.userRepo.Update(ctx, userID, map[string]any{"phone": phone}); err != nil {
 		return errs.ErrInternal
 	}
+	s.log().Info("user phone bound", zap.Int64("user_id", userID), zap.String("phone", maskPhone(phone)))
 	return nil
 }
 
@@ -444,6 +473,7 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken string) (*Login
 	if err != nil {
 		return nil, err
 	}
+	s.log().Info("user token refreshed", zap.Int64("user_id", claims.Sub))
 	return &LoginResult{TokenPair: *t, UserID: claims.Sub}, nil
 }
 
@@ -461,13 +491,18 @@ func (s *Service) Logout(ctx context.Context, accessToken, refreshToken string) 
 	}
 
 	if refreshToken == "" {
+		s.log().Info("user logged out", zap.Int64("user_id", accessClaims.Sub))
 		return nil
 	}
 	refreshClaims, err := s.parseUserToken(refreshToken)
 	if err != nil {
 		return err
 	}
-	return s.blacklistTokenClaims(ctx, refreshClaims)
+	if err := s.blacklistTokenClaims(ctx, refreshClaims); err != nil {
+		return err
+	}
+	s.log().Info("user logged out", zap.Int64("user_id", accessClaims.Sub))
+	return nil
 }
 
 func (s *Service) parseUserToken(token string) (*pkgjwt.Claims, error) {
@@ -526,6 +561,8 @@ func (s *Service) SendSmsCode(ctx context.Context, phone, purpose string) (strin
 		_ = s.rdb.Del(ctx, rateKey).Err()
 		return "", errs.ErrInternal
 	}
+	s.log().Info("sms code generated",
+		zap.String("phone", maskPhone(phone)), zap.String("purpose", purpose))
 	return code, nil
 }
 
@@ -578,6 +615,8 @@ func (s *Service) RegisterByPhone(ctx context.Context, phone, password, code str
 	if err != nil {
 		return nil, err
 	}
+	s.log().Info("phone registration succeeded",
+		zap.Int64("user_id", u.ID), zap.String("phone", maskPhone(phone)))
 	return &LoginResult{TokenPair: *t, UserID: u.ID, User: u}, nil
 }
 
@@ -635,6 +674,8 @@ func (s *Service) ResetPassword(ctx context.Context, phone, password, code, acce
 	if err != nil {
 		return nil, err
 	}
+	s.log().Info("password reset succeeded",
+		zap.Int64("user_id", user.ID), zap.String("phone", maskPhone(phone)))
 	return &LoginResult{TokenPair: *t, UserID: user.ID}, nil
 
 }
@@ -708,6 +749,8 @@ func (s *Service) PhoneLogin(ctx context.Context, req *PhoneLoginReq) (*PhoneLog
 	if err != nil {
 		return nil, err
 	} else if exists == 1 {
+		s.log().Warn("phone login rejected because account is locked",
+			zap.String("phone", maskPhone(req.Phone)))
 		return nil, errs.ErrAccountLocked
 	}
 
@@ -716,6 +759,8 @@ func (s *Service) PhoneLogin(ctx context.Context, req *PhoneLoginReq) (*PhoneLog
 	if err != nil {
 		return nil, errs.ErrParam.WithMsg("密码或账号错误")
 	} else if u.Status != "active" {
+		s.log().Warn("phone login rejected because account is inactive",
+			zap.Int64("user_id", u.ID), zap.String("status", u.Status))
 		return nil, errs.ErrAccountLocked
 	}
 
@@ -725,7 +770,10 @@ func (s *Service) PhoneLogin(ctx context.Context, req *PhoneLoginReq) (*PhoneLog
 	}
 	err = bcrypt.CompareHashAndPassword([]byte(*u.PasswordHash), []byte(req.Password))
 	if err != nil {
-		s.incLoginFail(ctx, req.Phone)
+		if failErr := s.incLoginFail(ctx, req.Phone); failErr != nil {
+			s.log().Error("record phone login failure failed", zap.Error(failErr))
+		}
+		s.log().Debug("phone login password mismatch", zap.String("phone", maskPhone(req.Phone)))
 		return nil, errs.ErrParam.WithMsg("密码或账号错误")
 	}
 
@@ -745,6 +793,7 @@ func (s *Service) PhoneLogin(ctx context.Context, req *PhoneLoginReq) (*PhoneLog
 		RefreshExpiresIn: r.RefreshExpiresIn,
 		User:             ToUserResp(u),
 	}
+	s.log().Info("phone login succeeded", zap.Int64("user_id", u.ID))
 	return result, nil
 
 }
@@ -766,6 +815,8 @@ func (s *Service) incLoginFail(ctx context.Context, phone string) error {
 		if err := s.rdb.Set(ctx, lockKey, 1, lockTTL).Err(); err != nil {
 			return err
 		}
+		s.log().Warn("phone login account locked",
+			zap.String("phone", maskPhone(phone)), zap.Int64("failed_attempts", cnt), zap.Duration("lock_ttl", lockTTL))
 		// 延长失败计数 TTL，与锁定时间一致，避免解锁后仍残留旧计数
 		_, _ = s.rdb.Expire(ctx, failKey, lockTTL).Result()
 	}
@@ -796,6 +847,8 @@ func (s *Service) RequestDeactivate(ctx context.Context, userID int64, reason st
 	if err := middleware.InvalidateUserStatusCache(ctx, s.rdb, userID); err != nil {
 		return err
 	}
+	s.log().Info("user deactivation requested",
+		zap.Int64("user_id", userID), zap.Time("deactivate_at", deactivateAt))
 	return nil
 }
 
@@ -814,6 +867,7 @@ func (s *Service) CancelDeactivate(ctx context.Context, userID int64) error {
 	if err != nil {
 		return err
 	}
+	s.log().Info("user deactivation cancelled", zap.Int64("user_id", userID))
 	return nil
 }
 
@@ -890,16 +944,22 @@ func (s *Service) AdminLogin(ctx context.Context, loginReq *AdminLoginReq, ip, u
 	captchaKey := fmt.Sprintf("shop:admin:captcha:%s", loginReq.CaptchaID)
 	captchaCode, err := s.rdb.GetDel(ctx, captchaKey).Result()
 	if captchaCode != loginReq.CaptchaCode || err != nil {
+		s.log().Warn("admin login captcha rejected",
+			zap.String("username", loginReq.Username), zap.String("ip", ip))
 		return nil, errs.ErrInternal.WithMsg("验证码错误")
 	}
 
 	admin, err := s.adminRepo.FindByUserName(ctx, loginReq.Username)
 	if err != nil {
+		s.log().Warn("admin login username rejected",
+			zap.String("username", loginReq.Username), zap.String("ip", ip))
 		return nil, errs.ErrUnauth.WithMsg("用户名或密码错误")
 	}
 
 	// 查看用户是否被锁定
 	if admin.LockedUntil.After(time.Now()) {
+		s.log().Warn("admin login rejected because account is locked",
+			zap.Int64("admin_id", admin.ID), zap.String("ip", ip))
 		return nil, errs.ErrUnauth.WithMsg("账号被锁定，请稍后重试")
 	}
 
@@ -914,10 +974,14 @@ func (s *Service) AdminLogin(ctx context.Context, loginReq *AdminLoginReq, ip, u
 			updates["locked_until"] = lockedUntil
 			updates["failed_attempts"] = 0
 			s.adminRepo.Update(ctx, admin.ID, updates)
+			s.log().Warn("admin account locked after failed login",
+				zap.Int64("admin_id", admin.ID), zap.String("ip", ip), zap.Time("locked_until", lockedUntil))
 			return nil, errs.ErrInternal.WithMsg("账号被锁定")
 		}
 		s.adminRepo.Update(ctx, admin.ID, updates)
-	return nil, errs.ErrInternal.WithMsg("密码或账号错误")
+		s.log().Debug("admin login password mismatch",
+			zap.Int64("admin_id", admin.ID), zap.Int("failed_attempts", newAttempts), zap.String("ip", ip))
+		return nil, errs.ErrInternal.WithMsg("密码或账号错误")
 	}
 
 	// 重置失败次数
@@ -935,6 +999,8 @@ func (s *Service) AdminLogin(ctx context.Context, loginReq *AdminLoginReq, ip, u
 	if err != nil {
 		return nil, err
 	}
+	s.log().Info("admin login succeeded",
+		zap.Int64("admin_id", admin.ID), zap.String("ip", ip), zap.Int("role_count", len(roleCodes)), zap.Int("permission_count", len(permCodes)))
 	return &LoginResult{TokenPair: *t, UserID: admin.ID}, nil
 }
 func (s *Service) AdminLoginout(ctx context.Context, accessToken, refreshToken string) error {
@@ -975,7 +1041,12 @@ func (s *Service) UpdateAdmin(ctx context.Context, adminID int64, req *UpdateAdm
 	if len(updates) == 0 {
 		return errs.ErrParam.WithMsg("没有需要更新的字段")
 	}
-	return s.adminRepo.Update(ctx, adminID, updates)
+	if err := s.adminRepo.Update(ctx, adminID, updates); err != nil {
+		return err
+	}
+	s.log().Info("admin profile updated",
+		zap.Int64("admin_id", adminID), zap.Int("field_count", len(updates)))
+	return nil
 }
 
 func (s *Service) CreateAdmin(ctx context.Context, req *CreateAdminReq) (*AdminResp, error) {
@@ -1022,6 +1093,8 @@ func (s *Service) CreateAdmin(ctx context.Context, req *CreateAdminReq) (*AdminR
 			return nil, err
 		}
 	}
+	s.log().Info("admin created",
+		zap.Int64("admin_id", id), zap.String("username", req.Username), zap.Int("role_count", len(req.RoleIDs)))
 
 	return s.AdminGetMe(ctx, id)
 }
@@ -1031,14 +1104,22 @@ func (s *Service) DisableAdmin(ctx context.Context, adminID int64) error {
 	if _, err := s.adminRepo.FindByID(ctx, adminID); err != nil {
 		return errs.ErrNotFound
 	}
-	return s.adminRepo.Update(ctx, adminID, map[string]any{"status": "disabled"})
+	if err := s.adminRepo.Update(ctx, adminID, map[string]any{"status": "disabled"}); err != nil {
+		return err
+	}
+	s.log().Info("admin disabled", zap.Int64("admin_id", adminID))
+	return nil
 }
 
 func (s *Service) EnableAdmin(ctx context.Context, adminID int64) error {
 	if _, err := s.adminRepo.FindByID(ctx, adminID); err != nil {
 		return errs.ErrNotFound
 	}
-	return s.adminRepo.Update(ctx, adminID, map[string]any{"status": "active"})
+	if err := s.adminRepo.Update(ctx, adminID, map[string]any{"status": "active"}); err != nil {
+		return err
+	}
+	s.log().Info("admin enabled", zap.Int64("admin_id", adminID))
+	return nil
 }
 
 func (s *Service) ResetAdminPwd(ctx context.Context, adminID int64, password string) error {
@@ -1052,7 +1133,11 @@ func (s *Service) ResetAdminPwd(ctx context.Context, adminID int64, password str
 	if err != nil {
 		return errs.ErrInternal
 	}
-	return s.adminRepo.Update(ctx, adminID, map[string]any{"password_hash": string(hash)})
+	if err := s.adminRepo.Update(ctx, adminID, map[string]any{"password_hash": string(hash)}); err != nil {
+		return err
+	}
+	s.log().Info("admin password reset", zap.Int64("admin_id", adminID))
+	return nil
 }
 
 func (s *Service) ListRoles(ctx context.Context) ([]RoleResp, error) {
@@ -1184,6 +1269,8 @@ func (s *Service) AdminCreateUser(ctx context.Context, req *AdminCreateUserReq) 
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		return nil, err
 	}
+	s.log().Info("admin created user",
+		zap.Int64("user_id", user.ID), zap.String("phone", maskPhone(req.Phone)))
 	return ToUserResp(user), nil
 }
 
@@ -1207,7 +1294,12 @@ func (s *Service) updateUserStatus(ctx context.Context, userID int64, status str
 	if _, err := s.userRepo.FindById(ctx, userID); err != nil {
 		return errs.ErrNotFound
 	}
-	return s.userRepo.Update(ctx, userID, map[string]any{"status": status, "deactivate_at": nil})
+	if err := s.userRepo.Update(ctx, userID, map[string]any{"status": status, "deactivate_at": nil}); err != nil {
+		return err
+	}
+	s.log().Info("user status updated",
+		zap.Int64("user_id", userID), zap.String("status", status))
+	return nil
 }
 
 func uniqueStrings(values []string) []string {
@@ -1233,7 +1325,12 @@ func (s *Service) AdminRechargeBalance(ctx context.Context, userID, amountCents,
 	if amountCents < 0 {
 		return errs.ErrParam.WithMsg("充值金额必须大于 0")
 	}
-	return s.userRepo.RechargeBalance(ctx, userID, amountCents, operatorID, remark)
+	if err := s.userRepo.RechargeBalance(ctx, userID, amountCents, operatorID, remark); err != nil {
+		return err
+	}
+	s.log().Info("user balance recharged",
+		zap.Int64("user_id", userID), zap.Int64("amount_cents", amountCents), zap.Int64("operator_id", operatorID))
+	return nil
 }
 
 // AdminListBalanceLogs 管理员查看指定用户的余额流水。
