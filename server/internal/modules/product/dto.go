@@ -50,6 +50,12 @@ type ProductListReq struct {
 	IDs        string         `form:"ids"`
 }
 
+// ListReq 收藏 / 浏览历史列表的分页请求。
+type ListReq struct {
+	Page     int `form:"page"     binding:"min=0"`
+	PageSize int `form:"page_size" binding:"min=0,max=50"`
+}
+
 func (r *ProductListReq) IDsList() ([]int64, error) {
 	parts := strings.Split(r.IDs, ",")
 	ids := make([]int64, 0, len(parts))
@@ -128,4 +134,61 @@ func toInt64StrPtr(v *int64) *types.Int64Str {
 	}
 	s := types.Int64Str(*v)
 	return &s
+}
+
+// ProductDetailResp 商品详情响应 DTO。
+type ProductDetailResp struct {
+	ProductResp
+	Images      json.RawMessage `json:"images"`
+	VideoURL    string          `json:"video_url,omitempty"`
+	DetailHTML  string          `json:"detail_html,omitempty"`
+	DetailNodes json.RawMessage `json:"detail_nodes,omitempty"`
+	Specs       []SpecResp      `json:"specs"`
+	SKUs        []UserSKUResp   `json:"skus"`
+	IsFavorite  bool            `json:"is_favorite"`
+}
+
+// SpecResp 规格响应。
+type SpecResp struct {
+	ID     types.Int64Str  `json:"id"`
+	Name   string          `json:"name"`
+	Sort   int             `json:"sort"`
+	Values []SpecValueResp `json:"values"`
+}
+
+// SpecValueResp 规格值响应。
+type SpecValueResp struct {
+	ID    types.Int64Str `json:"id"`
+	Value string         `json:"value"`
+	Sort  int            `json:"sort"`
+}
+
+// c 端 请求 SKUResp SKU 响应。
+type UserSKUResp struct {
+	ID                 types.Int64Str  `json:"id"`
+	ProductID          types.Int64Str  `json:"product_id"`
+	Attrs              json.RawMessage `json:"attrs"`
+	PriceCents         int64           `json:"price_cents"`
+	OriginalPriceCents *int64          `json:"original_price_cents,omitempty"`
+	Stock              int             `json:"stock"`
+	LockedStock        int             `json:"locked_stock"`
+	WeightG            int             `json:"weight_g"`
+	Image              string          `json:"image,omitempty"`
+	Status             string          `json:"status"`
+}
+
+// toUserSKUResp entity → UserSKUResp。
+func toUserSKUResp(s *SKU) UserSKUResp {
+	return UserSKUResp{
+		ID:                 types.Int64Str(s.ID),
+		ProductID:          types.Int64Str(s.ProductID),
+		Attrs:              json.RawMessage(s.Attrs),
+		PriceCents:         s.PriceCents,
+		OriginalPriceCents: s.OriginalPriceCents,
+		Stock:              s.Stock,
+		LockedStock:        s.LockedStock,
+		WeightG:            s.WeightG,
+		Image:              s.Image,
+		Status:             s.Status,
+	}
 }

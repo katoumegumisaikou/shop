@@ -2,8 +2,10 @@ package product
 
 import (
 	"context"
+	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ---- CategoryRepo ----
@@ -50,6 +52,14 @@ type ProductRepo interface {
 	ListByIDs(ctx context.Context, ids []int64) ([]*Product, error)
 	// Search 按条件模糊查询，返回列表和总数。
 	Search(ctx context.Context, f ProductFilter) ([]*Product, int, error)
+	// GetByID 按主键查询单个商品（自动过滤软删除）。
+	GetByID(ctx context.Context, id int64) (*Product, error)
+	// ListSpecs 查询商品的全部规格名。
+	ListSpecs(ctx context.Context, productID int64) ([]*ProductSpec, error)
+	// ListSpecValues 按规格 ID 批量查询规格值。
+	ListSpecValues(ctx context.Context, specIDs []int64) ([]*ProductSpecValue, error)
+	// ListSKUs 查询商品的全部 SKU。
+	ListSKUs(ctx context.Context, productID int64) ([]*SKU, error)
 }
 
 type productRepoImpl struct{ db *gorm.DB }
@@ -120,6 +130,181 @@ func (r *productRepoImpl) Search(ctx context.Context, f ProductFilter) ([]*Produ
 
 	var products []*Product
 	if err := q.Offset((page - 1) * pageSize).Limit(pageSize).Find(&products).Error; err != nil {
+		return nil, 0, err
+	}
+	return products, int(total), nil
+}
+
+func (r *productRepoImpl) GetByID(ctx context.Context, id int64) (*Product, error) {
+	var p Product
+	// First 自动附加 deleted_at IS NULL，找不到时返回 gorm.ErrRecordNotFound
+	if err := r.db.WithContext(ctx).First(&p, id).Error; err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (r *productRepoImpl) ListSpecs(ctx context.Context, productID int64) ([]*ProductSpec, error) {
+	var specs []*ProductSpec
+	if err := r.db.WithContext(ctx).
+		Where("product_id = ?", productID).
+		Order("sort ASC, id ASC").
+		Find(&specs).Error; err != nil {
+		return nil, err
+	}
+	return specs, nil
+}
+
+func (r *productRepoImpl) ListSpecValues(ctx context.Context, specIDs []int64) ([]*ProductSpecValue, error) {
+	if len(specIDs) == 0 {
+		return nil, nil
+	}
+	var values []*ProductSpecValue
+	if err := r.db.WithContext(ctx).
+		Where("spec_id IN ?", specIDs).
+		Order("sort ASC, id ASC").
+		Find(&values).Error; err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+func (r *productRepoImpl) ListSKUs(ctx context.Context, productID int64) ([]*SKU, error) {
+	var skus []*SKU
+	if err := r.db.WithContext(ctx).
+		Where("product_id = ?", productID).
+		Order("id ASC").
+		Find(&skus).Error; err != nil {
+		return nil, err
+	}
+	return skus, nil
+}
+
+// ---- FavoriteRepo ----
+
+// FavoriteRepo 用户收藏数据访问接口。
+type FavoriteRepo interface {
+	// IsFavorite 判断用户是否已收藏指定商品。
+	IsFavorite(ctx context.Context, userID, productID int64) (bool, error)
+	// Add 添加收藏（重复收藏幂等，ON CONFLICT DO NOTHING）。
+	Add(ctx context.Context, userID, productID int64) error
+	// Remove 取消收藏（不存在也返回 nil，幂等）。
+	Remove(ctx context.Context, userID, productID int64) error
+	// List 分页查询用户收藏的商品列表（按收藏时间倒序）。
+	List(ctx context.Context, userID int64, page, pageSize int) ([]*Product, int, error)
+}
+
+type favoriteRepoImpl struct{ db *gorm.DB }
+
+// NewFavoriteRepo 构造 FavoriteRepo。
+func NewFavoriteRepo(db *gorm.DB) FavoriteRepo {
+	return &favoriteRepoImpl{db: db}
+}
+
+func (r *favoriteRepoImpl) IsFavorite(ctx context.Context, userID, productID int64) (bool, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).
+		Model(&UserFavorite{}).
+		Where("user_id = ? AND product_id = ?", userID, productID).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (r *favoriteRepoImpl) Add(ctx context.Context, userID, productID int64) error {
+	// ON CONFLICT DO NOTHING：重复收藏不报错，幂等
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Create(&UserFavorite{UserID: userID, ProductID: productID}).Error
+}
+
+func (r *favoriteRepoImpl) Remove(ctx context.Context, userID, productID int64) error {
+	// 删除不存在的记录影响行数为 0，同样返回 nil，幂等
+	return r.db.WithContext(ctx).
+		Where("user_id = ? AND product_id = ?", userID, productID).
+		Delete(&UserFavorite{}).Error
+}
+
+func (r *favoriteRepoImpl) List(ctx context.Context, userID int64, page, pageSize int) ([]*Product, int, error) {
+	// 分页 clamp，与 Search 保持一致
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 50 {
+		pageSize = 20
+	}
+
+	q := r.db.WithContext(ctx).Model(&Product{}).
+		Joins("JOIN user_favorite f ON f.product_id = product.id").
+		Where("f.user_id = ?", userID)
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var products []*Product
+	if err := q.Order("f.created_at DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).
+		Find(&products).Error; err != nil {
+		return nil, 0, err
+	}
+	return products, int(total), nil
+}
+
+// ---- ViewHistoryRepo ----
+
+// ViewHistoryRepo 用户浏览历史数据访问接口。
+type ViewHistoryRepo interface {
+	// Upsert 记录一次浏览：已存在则刷新 ViewedAt，不存在则插入。
+	// 利用 (user_id, product_id) 联合主键做 ON CONFLICT，最近浏览按 ViewedAt 倒序取即可。
+	Upsert(ctx context.Context, userID, productID int64) error
+	// List 分页查询用户的最近浏览商品列表（按 viewed_at 倒序）。
+	List(ctx context.Context, userID int64, page, pageSize int) ([]*Product, int, error)
+}
+
+type viewHistoryRepoImpl struct{ db *gorm.DB }
+
+// NewViewHistoryRepo 构造 ViewHistoryRepo。
+func NewViewHistoryRepo(db *gorm.DB) ViewHistoryRepo {
+	return &viewHistoryRepoImpl{db: db}
+}
+
+func (r *viewHistoryRepoImpl) Upsert(ctx context.Context, userID, productID int64) error {
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}, {Name: "product_id"}},
+			DoUpdates: clause.Assignments(map[string]any{"viewed_at": time.Now()}),
+		}).
+		Create(&UserViewHistory{
+			UserID:    userID,
+			ProductID: productID,
+			ViewedAt:  time.Now(),
+		}).Error
+}
+
+func (r *viewHistoryRepoImpl) List(ctx context.Context, userID int64, page, pageSize int) ([]*Product, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 50 {
+		pageSize = 20
+	}
+
+	q := r.db.WithContext(ctx).Model(&Product{}).
+		Joins("JOIN user_view_history v ON v.product_id = product.id").
+		Where("v.user_id = ?", userID)
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var products []*Product
+	if err := q.Order("v.viewed_at DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).
+		Find(&products).Error; err != nil {
 		return nil, 0, err
 	}
 	return products, int(total), nil

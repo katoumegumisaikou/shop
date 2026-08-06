@@ -3,10 +3,16 @@ package product
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
+
+	"shop/internal/pkg/errs"
+	"shop/internal/pkg/singleflight"
+	"shop/internal/pkg/types"
 )
 
 const (
@@ -14,17 +20,21 @@ const (
 	categoryCacheTTL   = 5 * time.Minute
 	hotProductKey      = "shop:hot:product"
 	hotProductTTL      = 30 * time.Minute
+	// hotProductPageSize 热卖商品一次全量返回的条数上限，与 DTO binding(max=50)、repo clamp 上限一致
+	hotProductPageSize = 50
 )
 
 type Service struct {
-	rdb          *redis.Client
-	logger       *zap.Logger
-	categoryRepo CategoryRepo
-	productRepo  ProductRepo
+	rdb             *redis.Client
+	logger          *zap.Logger
+	categoryRepo    CategoryRepo
+	productRepo     ProductRepo
+	favoriteRepo    FavoriteRepo
+	viewHistoryRepo ViewHistoryRepo
 }
 
-func NewService(rdb *redis.Client, logger *zap.Logger, categoryRepo CategoryRepo, productRepo ProductRepo) *Service {
-	return &Service{rdb: rdb, logger: logger, categoryRepo: categoryRepo, productRepo: productRepo}
+func NewService(rdb *redis.Client, logger *zap.Logger, categoryRepo CategoryRepo, productRepo ProductRepo, favoriteRepo FavoriteRepo, viewHistoryRepo ViewHistoryRepo) *Service {
+	return &Service{rdb: rdb, logger: logger, categoryRepo: categoryRepo, productRepo: productRepo, favoriteRepo: favoriteRepo, viewHistoryRepo: viewHistoryRepo}
 }
 
 func (s *Service) ListCategories(ctx context.Context) ([]CategoriesResp, error) {
@@ -37,8 +47,8 @@ func (s *Service) ListCategories(ctx context.Context) ([]CategoriesResp, error) 
 		}
 	}
 
-	// redis无数据时，重新构建
-	categories, err := s.categoryRepo.ListAll(ctx)
+	// redis无数据时，重新构建,使用singleflight避免缓存击穿
+	categories, err := singleflight.Lock(categoriesCacheKey, func() ([]*Category, error) { return s.categoryRepo.ListAll(ctx) })
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +130,9 @@ func (s *Service) ListProducts(ctx context.Context, req *ProductListReq) ([]Prod
 	return list, total, nil
 }
 
-func (s *Service) ListHotProducts(ctx context.Context, req ProductListReq) ([]ProductResp, error) {
+// ListHotProducts 热卖商品列表。
+// 固定返回第一页全量数据，不接受前端分页/筛选参数，保证缓存与 singleflight 的 key 一致。
+func (s *Service) ListHotProducts(ctx context.Context) ([]ProductResp, error) {
 	var resp []ProductResp
 	// 1.先查redis
 	bytes, err := s.rdb.Get(ctx, hotProductKey).Bytes()
@@ -139,14 +151,18 @@ func (s *Service) ListHotProducts(ctx context.Context, req ProductListReq) ([]Pr
 		}
 	}
 
-	// 2.redis挂了，或者是product list unmarshal失败
-	products, _, err := s.productRepo.Search(ctx, ProductFilter{
-		Status:   req.Status,
-		Sort:     "hot",
-		InStock:  req.InStock,
-		Page:     req.Page,
-		PageSize: req.PageSize,
+	// 2.redis挂了，或者是product list unmarshal失败，使用singleflight避免大量请求打到数据库
+	// 热卖商品固定全量（第一页）查询，key 用 hotProductKey，与 redis 缓存 key 保持一致，
+	// 避免不同参数的请求被 singleflight 错误合并
+	products, err := singleflight.Lock(hotProductKey, func() ([]*Product, error) {
+		ps, _, e := s.productRepo.Search(ctx, ProductFilter{
+			Sort:     "hot",
+			Page:     1,
+			PageSize: hotProductPageSize,
+		})
+		return ps, e
 	})
+
 	if err != nil {
 		return nil, err
 	}
@@ -172,4 +188,130 @@ func (s *Service) ListHotProducts(ctx context.Context, req ProductListReq) ([]Pr
 	}()
 
 	return resp, nil
+}
+
+// GetProduct 商品详情：商品基础信息 + 规格树 + SKU 列表 + 收藏状态。
+// userID 为 0 表示未登录，直接返回 is_favorite=false。
+func (s *Service) GetProduct(ctx context.Context, productID, userID int64) (*ProductDetailResp, error) {
+	product, err := s.productRepo.GetByID(ctx, productID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.ErrNotFound
+		}
+		return nil, err
+	}
+
+	// 规格树：先查规格名，再按规格 ID 批量查规格值
+	specs, err := s.productRepo.ListSpecs(ctx, productID)
+	if err != nil {
+		return nil, err
+	}
+	specIDs := make([]int64, 0, len(specs))
+	for _, sp := range specs {
+		specIDs = append(specIDs, sp.ID)
+	}
+	values, err := s.productRepo.ListSpecValues(ctx, specIDs)
+	if err != nil {
+		return nil, err
+	}
+	// 按 spec_id 分组，方便挂到对应规格名下
+	valueMap := make(map[int64][]SpecValueResp, len(values))
+	for _, v := range values {
+		valueMap[v.SpecID] = append(valueMap[v.SpecID], SpecValueResp{
+			ID:    types.Int64Str(v.ID),
+			Value: v.Value,
+			Sort:  v.Sort,
+		})
+	}
+	specResp := make([]SpecResp, 0, len(specs))
+	for _, sp := range specs {
+		specResp = append(specResp, SpecResp{
+			ID:     types.Int64Str(sp.ID),
+			Name:   sp.Name,
+			Sort:   sp.Sort,
+			Values: valueMap[sp.ID],
+		})
+	}
+
+	// SKU 列表
+	skus, err := s.productRepo.ListSKUs(ctx, productID)
+	if err != nil {
+		return nil, err
+	}
+	skuResp := make([]UserSKUResp, 0, len(skus))
+	for _, sku := range skus {
+		skuResp = append(skuResp, toUserSKUResp(sku))
+	}
+
+	// 收藏状态 + 浏览历史：未登录直接跳过，登录才查
+	isFavorite := false
+	if userID > 0 {
+		isFavorite, err = s.favoriteRepo.IsFavorite(ctx, userID, productID)
+		if err != nil {
+			return nil, err
+		}
+		// 记录浏览历史：非核心路径，失败只记日志，不阻断详情返回
+		if err := s.viewHistoryRepo.Upsert(ctx, userID, productID); err != nil {
+			s.logger.Warn("record view history failed",
+				zap.Int64("user_id", userID),
+				zap.Int64("product_id", productID),
+				zap.Error(err))
+		}
+	}
+
+	base := ToProductResp(product)
+	return &ProductDetailResp{
+		ProductResp: *base,
+		Images:      json.RawMessage(product.Images),
+		VideoURL:    product.VideoURL,
+		DetailHTML:  product.DetailHTML,
+		DetailNodes: json.RawMessage(product.DetailNodes),
+		Specs:       specResp,
+		SKUs:        skuResp,
+		IsFavorite:  isFavorite,
+	}, nil
+}
+
+// AddFavorite 收藏商品。
+func (s *Service) AddFavorite(ctx context.Context, userID, productID int64) error {
+	// 校验商品存在，避免收藏指向不存在的商品
+	if _, err := s.productRepo.GetByID(ctx, productID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errs.ErrNotFound
+		}
+		return err
+	}
+	return s.favoriteRepo.Add(ctx, userID, productID)
+}
+
+// RemoveFavorite 取消收藏。
+func (s *Service) RemoveFavorite(ctx context.Context, userID, productID int64) error {
+	return s.favoriteRepo.Remove(ctx, userID, productID)
+}
+
+// ListFavorites 用户收藏的商品列表。
+func (s *Service) ListFavorites(ctx context.Context, userID int64, page, pageSize int) ([]ProductResp, int, error) {
+	products, total, err := s.favoriteRepo.List(ctx, userID, page, pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	return toProductRespList(products), total, nil
+}
+
+// GetViewHistory 用户最近浏览的商品列表。
+func (s *Service) GetViewHistory(ctx context.Context, userID int64, page, pageSize int) ([]ProductResp, int, error) {
+	products, total, err := s.viewHistoryRepo.List(ctx, userID, page, pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	return toProductRespList(products), total, nil
+}
+
+// toProductRespList 批量转换 Product 实体为响应 DTO。
+func toProductRespList(products []*Product) []ProductResp {
+	list := make([]ProductResp, 0, len(products))
+	for _, p := range products {
+		list = append(list, *ToProductResp(p))
+	}
+	return list
 }
