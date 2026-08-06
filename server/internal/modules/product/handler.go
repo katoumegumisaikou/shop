@@ -130,3 +130,214 @@ func (h *Handler) GetViewHistory(c *gin.Context) {
 	}
 	response.OK(c, gin.H{"products": resp, "total": total})
 }
+
+// ---- 后台管理 ----
+
+// AdminListCategories 后台分类列表。
+func (h *Handler) AdminListCategories(c *gin.Context) {
+	resp, err := h.svc.AdminListCategories(c.Request.Context())
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, resp)
+}
+
+// AdminCreateCategory 创建分类。
+func (h *Handler) AdminCreateCategory(c *gin.Context) {
+	var req AdminCategoryReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	resp, err := h.svc.AdminCreateCategory(c.Request.Context(), &req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, resp)
+}
+
+// AdminUpdateCategory 更新分类。
+func (h *Handler) AdminUpdateCategory(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	var req AdminCategoryReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	resp, err := h.svc.AdminUpdateCategory(c.Request.Context(), id, &req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, resp)
+}
+
+// AdminDeleteCategory 删除分类。
+func (h *Handler) AdminDeleteCategory(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	if err := h.svc.AdminDeleteCategory(c.Request.Context(), id); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+// AdminListProducts 后台商品列表。
+func (h *Handler) AdminListProducts(c *gin.Context) {
+	var req ProductListReq
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	resp, total, err := h.svc.AdminListProducts(c.Request.Context(), &req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, gin.H{"products": resp, "total": total})
+}
+
+// AdminCreateProduct 创建商品。
+func (h *Handler) AdminCreateProduct(c *gin.Context) {
+	var req AdminProductReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	resp, err := h.svc.AdminCreateProduct(c.Request.Context(), &req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, resp)
+}
+
+// AdminGetProduct 后台商品详情。
+func (h *Handler) AdminGetProduct(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	resp, err := h.svc.AdminGetProduct(c.Request.Context(), id)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, resp)
+}
+
+// AdminUpdateProduct 更新商品。
+func (h *Handler) AdminUpdateProduct(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	var req AdminProductReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	resp, err := h.svc.AdminUpdateProduct(c.Request.Context(), id, &req)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, resp)
+}
+
+// AdminDeleteProduct 删除商品。
+func (h *Handler) AdminDeleteProduct(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	if err := h.svc.AdminDeleteProduct(c.Request.Context(), id); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+// AdminCopyProduct 复制商品。
+func (h *Handler) AdminCopyProduct(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	resp, err := h.svc.AdminCopyProduct(c.Request.Context(), id)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, resp)
+}
+
+// AdminOnSale 上架。
+func (h *Handler) AdminOnSale(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	if err := h.svc.AdminOnSale(c.Request.Context(), id); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+// AdminOffSale 下架。
+func (h *Handler) AdminOffSale(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.Error(c, errs.ErrParam)
+		return
+	}
+	if err := h.svc.AdminOffSale(c.Request.Context(), id); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+// AdminBatchStatus 批量上下架。
+func (h *Handler) AdminBatchStatus(c *gin.Context) {
+	var req AdminBatchStatusReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	if err := h.svc.AdminBatchStatus(c.Request.Context(), &req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
+// AdminBatchPrice 批量改价。
+func (h *Handler) AdminBatchPrice(c *gin.Context) {
+	var req AdminBatchPriceReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	if err := h.svc.AdminBatchPrice(c.Request.Context(), &req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, nil)
+}

@@ -14,6 +14,12 @@ import (
 type CategoryRepo interface {
 	// ListAll 查询全部未软删除的商品分类。
 	ListAll(ctx context.Context) ([]*Category, error)
+	// Create 创建分类。
+	Create(ctx context.Context, c *Category) error
+	// Update 更新分类指定字段（parent_id/name/icon/sort/status）。
+	Update(ctx context.Context, c *Category) error
+	// Delete 软删除分类。
+	Delete(ctx context.Context, id int64) error
 }
 
 type categoryRepoImpl struct{ db *gorm.DB }
@@ -31,6 +37,28 @@ func (r *categoryRepoImpl) ListAll(ctx context.Context) ([]*Category, error) {
 		return nil, err
 	}
 	return categories, nil
+}
+
+func (r *categoryRepoImpl) Create(ctx context.Context, c *Category) error {
+	return r.db.WithContext(ctx).Create(c).Error
+}
+
+func (r *categoryRepoImpl) Update(ctx context.Context, c *Category) error {
+	return r.db.WithContext(ctx).Model(c).Updates(map[string]any{
+		"parent_id": c.ParentID,
+		"name":      c.Name,
+		"icon":      c.Icon,
+		"sort":      c.Sort,
+		"status":    c.Status,
+	}).Error
+}
+
+func (r *categoryRepoImpl) Delete(ctx context.Context, id int64) error {
+	var c Category
+	if err := r.db.WithContext(ctx).First(&c, id).Error; err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Delete(&c).Error
 }
 
 // ---- ProductRepo ----
@@ -60,6 +88,18 @@ type ProductRepo interface {
 	ListSpecValues(ctx context.Context, specIDs []int64) ([]*ProductSpecValue, error)
 	// ListSKUs 查询商品的全部 SKU。
 	ListSKUs(ctx context.Context, productID int64) ([]*SKU, error)
+	// CreateWithDetails 事务内创建商品 + 规格树 + SKU。
+	CreateWithDetails(ctx context.Context, p *Product, specs []*ProductSpec, skus []*SKU) error
+	// UpdateBase 更新商品基础字段。
+	UpdateBase(ctx context.Context, p *Product) error
+	// DeleteByID 软删除商品。
+	DeleteByID(ctx context.Context, id int64) error
+	// UpdateStatus 批量更新商品状态（draft/onsale/offsale）。
+	UpdateStatus(ctx context.Context, ids []int64, status string, onSaleAt *time.Time) error
+	// ReplaceDetails 事务内重建商品规格树与 SKU（先删后插）。
+	ReplaceDetails(ctx context.Context, productID int64, specs []*ProductSpec, skus []*SKU) error
+	// UpdateSKUPrices 批量更新 SKU 价格。
+	UpdateSKUPrices(ctx context.Context, priceMap map[int64]int64) error
 }
 
 type productRepoImpl struct{ db *gorm.DB }
@@ -178,6 +218,163 @@ func (r *productRepoImpl) ListSKUs(ctx context.Context, productID int64) ([]*SKU
 		return nil, err
 	}
 	return skus, nil
+}
+
+// createSpecs 在事务内创建规格树，并把每个规格的规格值挂上对应 SpecID。
+func createSpecs(tx *gorm.DB, specs []*ProductSpec) error {
+	for _, sp := range specs {
+		if err := tx.Create(sp).Error; err != nil {
+			return err
+		}
+		for _, v := range sp.Values {
+			v.SpecID = sp.ID
+		}
+		if len(sp.Values) > 0 {
+			if err := tx.Create(&sp.Values).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *productRepoImpl) CreateWithDetails(ctx context.Context, p *Product, specs []*ProductSpec, skus []*SKU) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(p).Error; err != nil {
+			return err
+		}
+		if err := createSpecs(tx, specs); err != nil {
+			return err
+		}
+		for _, sku := range skus {
+			sku.ProductID = p.ID
+		}
+		if len(skus) > 0 {
+			return tx.Create(&skus).Error
+		}
+		return nil
+	})
+}
+
+func (r *productRepoImpl) UpdateBase(ctx context.Context, p *Product) error {
+	return r.db.WithContext(ctx).Model(p).Updates(map[string]any{
+		"category_id":         p.CategoryID,
+		"title":               p.Title,
+		"subtitle":            p.Subtitle,
+		"main_image":          p.MainImage,
+		"images":              p.Images,
+		"video_url":           p.VideoURL,
+		"detail_html":         p.DetailHTML,
+		"detail_nodes":        p.DetailNodes,
+		"unit":                p.Unit,
+		"is_virtual":          p.IsVirtual,
+		"freight_template_id": p.FreightTemplateID,
+		"sort":                p.Sort,
+		"tags":                p.Tags,
+		"price_min_cents":     p.PriceMinCents,
+		"price_max_cents":     p.PriceMaxCents,
+	}).Error
+}
+
+func (r *productRepoImpl) DeleteByID(ctx context.Context, id int64) error {
+	var p Product
+	if err := r.db.WithContext(ctx).First(&p, id).Error; err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Delete(&p).Error
+}
+
+func (r *productRepoImpl) UpdateStatus(ctx context.Context, ids []int64, status string, onSaleAt *time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&Product{}).
+		Where("id IN ?", ids).
+		Updates(map[string]any{
+			"status":     status,
+			"on_sale_at": onSaleAt,
+		}).Error
+}
+
+func (r *productRepoImpl) ReplaceDetails(ctx context.Context, productID int64, specs []*ProductSpec, skus []*SKU) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 先删旧的规格值 / 规格 / SKU（这三个表无软删除，物理删除）
+		var specIDs []int64
+		if err := tx.Model(&ProductSpec{}).
+			Where("product_id = ?", productID).
+			Pluck("id", &specIDs).Error; err != nil {
+			return err
+		}
+		if len(specIDs) > 0 {
+			if err := tx.Where("spec_id IN ?", specIDs).
+				Delete(&ProductSpecValue{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("product_id = ?", productID).
+			Delete(&ProductSpec{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("product_id = ?", productID).
+			Delete(&SKU{}).Error; err != nil {
+			return err
+		}
+		// 再重建
+		if err := createSpecs(tx, specs); err != nil {
+			return err
+		}
+		for _, sku := range skus {
+			sku.ProductID = productID
+		}
+		if len(skus) > 0 {
+			return tx.Create(&skus).Error
+		}
+		return nil
+	})
+}
+
+func (r *productRepoImpl) UpdateSKUPrices(ctx context.Context, priceMap map[int64]int64) error {
+	if len(priceMap) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 先确定受影响商品（改价的 SKU 属于哪些 product）
+		skuIDs := make([]int64, 0, len(priceMap))
+		for id := range priceMap {
+			skuIDs = append(skuIDs, id)
+		}
+		var productIDs []int64
+		if err := tx.Model(&SKU{}).
+			Where("id IN ?", skuIDs).
+			Distinct().
+			Pluck("product_id", &productIDs).Error; err != nil {
+			return err
+		}
+
+		// 更新价格
+		for id, price := range priceMap {
+			if err := tx.Model(&SKU{}).Where("id = ?", id).
+				Update("price_cents", price).Error; err != nil {
+				return err
+			}
+		}
+
+		// 重算受影响商品的 price_min/max（仅统计 active 状态的 SKU）
+		if len(productIDs) > 0 {
+			if err := tx.Exec(`
+				UPDATE product SET
+					price_min_cents = COALESCE((
+						SELECT MIN(price_cents) FROM sku s
+						WHERE s.product_id = product.id AND s.status = 'active'), 0),
+					price_max_cents = COALESCE((
+						SELECT MAX(price_cents) FROM sku s
+						WHERE s.product_id = product.id AND s.status = 'active'), 0)
+				WHERE id IN ?`, productIDs).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // ---- FavoriteRepo ----

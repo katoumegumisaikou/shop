@@ -192,3 +192,136 @@ func toUserSKUResp(s *SKU) UserSKUResp {
 		Status:             s.Status,
 	}
 }
+
+// ---- 后台管理 DTO ----
+
+// AdminCategoryReq 分类创建/更新请求。
+type AdminCategoryReq struct {
+	ParentID types.Int64Str `json:"parent_id"`
+	Name     string         `json:"name"   binding:"required"`
+	Icon     string         `json:"icon"`
+	Sort     int            `json:"sort"`
+	Status   string         `json:"status" binding:"omitempty,oneof=enabled disabled"`
+}
+
+// AdminSpecInput 后台商品规格输入（规格名 + 规格值列表）。
+type AdminSpecInput struct {
+	Name   string   `json:"name"   binding:"required"`
+	Sort   int      `json:"sort"`
+	Values []string `json:"values"`
+}
+
+// AdminSKUInput 后台 SKU 输入。
+type AdminSKUInput struct {
+	Attrs              map[string]string `json:"attrs"`
+	PriceCents         int64             `json:"price_cents"`
+	OriginalPriceCents *int64            `json:"original_price_cents"`
+	Stock              int               `json:"stock"`
+	WeightG            int               `json:"weight_g"`
+	SkuCode            *string           `json:"sku_code"`
+	Barcode            *string           `json:"barcode"`
+	Image              string            `json:"image"`
+	Status             string            `json:"status"`
+	LowStockThreshold  int               `json:"low_stock_threshold"`
+}
+
+// AdminProductReq 后台商品创建/更新请求。
+type AdminProductReq struct {
+	CategoryID        types.Int64Str   `json:"category_id"  binding:"required"`
+	Title             string           `json:"title"        binding:"required"`
+	Subtitle          string           `json:"subtitle"`
+	MainImage         string           `json:"main_image"   binding:"required"`
+	Images            json.RawMessage  `json:"images"`
+	VideoURL          string           `json:"video_url"`
+	DetailHTML        string           `json:"detail_html"`
+	DetailNodes       json.RawMessage  `json:"detail_nodes"`
+	Unit              string           `json:"unit"`
+	IsVirtual         bool             `json:"is_virtual"`
+	FreightTemplateID *int64           `json:"freight_template_id"`
+	Sort              int              `json:"sort"`
+	Tags              json.RawMessage  `json:"tags"`
+	Specs             []AdminSpecInput `json:"specs"`
+	SKUs              []AdminSKUInput  `json:"skus"`
+}
+
+// AdminBatchStatusReq 批量上下架请求。
+type AdminBatchStatusReq struct {
+	IDs    []int64 `json:"ids"    binding:"required,min=1,max=100"`
+	Status string  `json:"status" binding:"required,oneof=draft onsale offsale"`
+}
+
+// AdminSKUPriceInput 批量改价中的单条。
+type AdminSKUPriceInput struct {
+	SKUID      int64 `json:"sku_id"      binding:"required"`
+	PriceCents int64 `json:"price_cents" binding:"required"`
+}
+
+// AdminBatchPriceReq 批量改价请求。
+type AdminBatchPriceReq struct {
+	Items []AdminSKUPriceInput `json:"items" binding:"required,min=1,max=100"`
+}
+
+// AdminProductResp 后台商品列表项（含虚拟销量等内部字段）。
+type AdminProductResp struct {
+	ProductResp
+	VirtualSales int       `json:"virtual_sales"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// toAdminProductResp Product 实体 → 后台列表 DTO。
+func toAdminProductResp(p *Product) *AdminProductResp {
+	base := ToProductResp(p)
+	return &AdminProductResp{
+		ProductResp:  *base,
+		VirtualSales: p.VirtualSales,
+		CreatedAt:    p.CreatedAt,
+	}
+}
+
+// AdminSKUResp 后台 SKU 响应（含内部管理字段）。
+type AdminSKUResp struct {
+	ID                 types.Int64Str  `json:"id"`
+	ProductID          types.Int64Str  `json:"product_id"`
+	Attrs              json.RawMessage `json:"attrs"`
+	PriceCents         int64           `json:"price_cents"`
+	OriginalPriceCents *int64          `json:"original_price_cents,omitempty"`
+	Stock              int             `json:"stock"`
+	LockedStock        int             `json:"locked_stock"`
+	WeightG            int             `json:"weight_g"`
+	SkuCode            *string         `json:"sku_code,omitempty"`
+	Barcode            *string         `json:"barcode,omitempty"`
+	Image              string          `json:"image,omitempty"`
+	Status             string          `json:"status"`
+	LowStockThreshold  int             `json:"low_stock_threshold"`
+}
+
+// toAdminSKUResp SKU 实体 → 后台 SKU DTO。
+func toAdminSKUResp(s *SKU) AdminSKUResp {
+	return AdminSKUResp{
+		ID:                 types.Int64Str(s.ID),
+		ProductID:          types.Int64Str(s.ProductID),
+		Attrs:              json.RawMessage(s.Attrs),
+		PriceCents:         s.PriceCents,
+		OriginalPriceCents: s.OriginalPriceCents,
+		Stock:              s.Stock,
+		LockedStock:        s.LockedStock,
+		WeightG:            s.WeightG,
+		SkuCode:            s.SkuCode,
+		Barcode:            s.Barcode,
+		Image:              s.Image,
+		Status:             s.Status,
+		LowStockThreshold:  s.LowStockThreshold,
+	}
+}
+
+// AdminProductDetailResp 后台商品详情响应。
+type AdminProductDetailResp struct {
+	ProductResp
+	VirtualSales int             `json:"virtual_sales"`
+	Images       json.RawMessage `json:"images"`
+	VideoURL     string          `json:"video_url,omitempty"`
+	DetailHTML   string          `json:"detail_html,omitempty"`
+	DetailNodes  json.RawMessage `json:"detail_nodes,omitempty"`
+	Specs        []SpecResp      `json:"specs"`
+	SKUs         []AdminSKUResp  `json:"skus"`
+}

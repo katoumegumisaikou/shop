@@ -101,6 +101,8 @@ type ProductSpec struct {
 	ProductID int64  `gorm:"not null"`
 	Name      string `gorm:"size:32;not null"`
 	Sort      int    `gorm:"not null;default:0"`
+	// Values 仅内存中携带规格值（创建/重建商品时用），gorm:"-" 不落库。
+	Values []*ProductSpecValue `gorm:"-"`
 }
 
 func (ProductSpec) TableName() string { return "product_spec" }
