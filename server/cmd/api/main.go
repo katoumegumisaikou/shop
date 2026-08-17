@@ -20,6 +20,8 @@ import (
 
 	"shop/internal/middleware"
 	"shop/internal/modules/account"
+	"shop/internal/modules/cart"
+	"shop/internal/modules/product"
 	pkgjwt "shop/internal/pkg/jwt"
 	"shop/internal/pkg/logger"
 	"shop/internal/pkg/snowflake"
@@ -90,6 +92,13 @@ func main() {
 	isProd := os.Getenv("APP_ENV") == "prod"
 	handler := account.NewHandler(svc, userCfg, adminCfg, isProd, nil)
 
+	// Cart 模块：构造 productRepo（仅 cart 需要，product 模块本身暂不注册路由），
+	// 然后 repo → service → handler。
+	productRepo := product.NewProductRepo(db)
+	cartRepo := cart.NewCartRepo(db)
+	cartSvc := cart.NewService(cartRepo, productRepo, appLogger)
+	cartHandler := cart.NewHandler(cartSvc)
+
 	// 7. 注册路由
 	r := gin.New()
 	r.Use(gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, recovered any) {
@@ -127,6 +136,7 @@ func main() {
 	// 所有模块路由挂载到 /api/v1 下
 	api := r.Group("/api/v1")
 	account.RegisterRoutes(api, handler, rdb, db, userCfg)
+	cart.RegisterRoutes(api, cartHandler, rdb, db, userCfg)
 
 	// 8. 启动
 	addr := getEnv("LISTEN_ADDR", ":8080")
