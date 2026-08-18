@@ -20,6 +20,7 @@ import (
 
 	"shop/internal/middleware"
 	"shop/internal/modules/account"
+	"shop/internal/modules/address"
 	"shop/internal/modules/cart"
 	"shop/internal/modules/product"
 	pkgjwt "shop/internal/pkg/jwt"
@@ -99,6 +100,11 @@ func main() {
 	cartSvc := cart.NewService(cartRepo, productRepo, appLogger)
 	cartHandler := cart.NewHandler(cartSvc)
 
+	// Address 模块：收货地址
+	addressRepo := address.NewAddressRepo(db)
+	addressSvc := address.NewService(addressRepo, appLogger)
+	addressHandler := address.NewHandler(addressSvc)
+
 	// 7. 注册路由
 	r := gin.New()
 	r.Use(gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, recovered any) {
@@ -137,6 +143,7 @@ func main() {
 	api := r.Group("/api/v1")
 	account.RegisterRoutes(api, handler, rdb, db, userCfg)
 	cart.RegisterRoutes(api, cartHandler, rdb, db, userCfg)
+	address.RegisterRoutes(api, addressHandler, rdb, db, userCfg)
 
 	// 8. 启动
 	addr := getEnv("LISTEN_ADDR", ":8080")
