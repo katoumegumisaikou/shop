@@ -134,9 +134,34 @@ func (h *Handler) SetDefault(c *gin.Context) {
 	response.OK(c, nil)
 }
 
-// DecryptWxAddress 解密微信地址（占位实现，TODO: 调用微信加密数据解密接口）。
+// DecryptWxAddress 解密微信加密地址。
+//
+// 请求体: {"encrypted_data": "<base64>", "iv": "<base64>"}
+// 响应体: 解密后的 JSON（provinceName / cityName / countyName / detail / ...）
 func (h *Handler) DecryptWxAddress(c *gin.Context) {
-	response.Error(c, errs.ErrServiceDegraded.WithMsg("DecryptWxAddress 暂未实现"))
+	var req decryptWxReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, err)
+		return
+	}
+	userID := c.GetInt64("user_id")
+	data, err := h.svc.DecryptWxAddress(c.Request.Context(), userID, req.EncryptedData, req.IV)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, data)
+}
+
+// Region 行政区划查询（公开接口，按 region_code 返回下级或整棵树）。
+func (h *Handler) Region(c *gin.Context) {
+	regionCode := c.Query("region_code")
+	resp, err := h.svc.Region(c.Request.Context(), regionCode)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.OK(c, resp)
 }
 
 // ---- helpers ----

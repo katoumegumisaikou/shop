@@ -24,6 +24,7 @@ import (
 	"shop/internal/modules/cart"
 	"shop/internal/modules/product"
 	pkgjwt "shop/internal/pkg/jwt"
+	"shop/internal/pkg/region"
 	"shop/internal/pkg/logger"
 	"shop/internal/pkg/snowflake"
 	"shop/internal/pkg/wxlogin"
@@ -101,8 +102,9 @@ func main() {
 	cartHandler := cart.NewHandler(cartSvc)
 
 	// Address 模块：收货地址
+	regionRepo := region.NewRepo(db)
 	addressRepo := address.NewAddressRepo(db)
-	addressSvc := address.NewService(addressRepo, appLogger)
+	addressSvc := address.NewService(addressRepo, rdb, wxMP, regionRepo, appLogger)
 	addressHandler := address.NewHandler(addressSvc)
 
 	// 7. 注册路由

@@ -22,4 +22,12 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, rdb *redis.Client, db *gorm.
 		address.POST("/default", h.SetDefault)
 		address.POST("/decrypt-wx", h.DecryptWxAddress)
 	}
+
+	// 行政区划公开查询:挂在 r 上而不是 address group,避开 userAuth 中间件。
+	// PublicCache 缓存 1 天(region 数据基本静态),ETag 用于 304 协商缓存。
+	r.GET("/address/open/region",
+		middleware.PublicCache(86400, 0),
+		middleware.ETagMiddleware(),
+		h.Region,
+	)
 }

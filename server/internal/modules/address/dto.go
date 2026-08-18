@@ -26,6 +26,12 @@ type defaultReq struct {
 	ID int64 `json:"id" binding:"required"`
 }
 
+// decryptWxReq 解密微信加密地址请求。
+type decryptWxReq struct {
+	EncryptedData string `json:"encrypted_data" binding:"required"`
+	IV            string `json:"iv"            binding:"required"`
+}
+
 // AddressResp 单条地址响应。
 type AddressResp struct {
 	ID           int64     `json:"id"`
@@ -53,4 +59,13 @@ func toResp(a *Address) *AddressResp {
 		CreatedAt:    a.CreatedAt,
 		UpdatedAt:    a.UpdatedAt,
 	}
+}
+
+// RegionResp 行政区划响应 DTO。
+type RegionResp struct {
+	Code        string  `json:"code"`
+	ParentCode  *string `json:"parent_code,omitempty"`
+	Name        string  `json:"name"`
+	Level       int     `json:"level"`
+	HasChildren bool    `json:"has_children"`
 }
