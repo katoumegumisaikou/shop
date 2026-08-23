@@ -39,21 +39,6 @@ type OrderSKUInfo struct {
 	SkuLockedStock   int
 }
 
-// OrderRepo 订单数据访问接口。
-type OrderRepo interface {
-	// InsertOrder 事务内插入订单主表 + 明细表。
-	InsertOrder(ctx context.Context, o *Order, items []*OrderItem) error
-	// FindSKUsByIDs 批量按 SKU ID 查 SKU + Product 信息,返回以 skuID 为键的 map。
-	// 不存在的 skuID 不在 map 里(调用方需自行判 missing)。
-	FindSKUsByIDs(ctx context.Context, skuIDs []int64) (map[int64]*OrderSKUInfo, error)
-	// GetByID 按主键查订单。
-	GetByID(ctx context.Context, id int64) (*Order, error)
-	// ListByUserID 分页查用户的订单。
-	ListByUserID(ctx context.Context, userID int64, page, pageSize int) ([]*Order, int, error)
-	// UpdateStatus 更新订单状态。
-	UpdateStatus(ctx context.Context, id int64, status string) error
-}
-
 // Service 订单服务。
 type Service struct {
 	repo        OrderRepo
@@ -169,6 +154,9 @@ func (s *Service) checkItemsAvailability(req *CreateOrderReq, skuMap map[int64]*
 	return nil
 }
 
+
+func (s*Service)cal
+
 // CreateOrder 下单。
 //
 // 占位实现，TODO：等 freight / coupon 模块接入后再实现运费/优惠计算。
@@ -200,6 +188,7 @@ func (s *Service) CreateOrder(ctx context.Context, userID int64, req *CreateOrde
 	}
 
 	// 4. 计算运费
+	
 	//  查地址并校验归属(归属校验防越权下单到别人地址)
 	addr, err := s.getAddressWithOwnership(ctx, userID, int64(req.AddressID))
 	if err != nil {
@@ -211,8 +200,6 @@ func (s *Service) CreateOrder(ctx context.Context, userID int64, req *CreateOrde
 	if err != nil {
 		return nil, err
 	}
-	//  根据地址快照查找运费模板
-	s.regionRepo
 
 	_ = snap // TODO: 写入 Order.AddressSnapshot
 
@@ -220,4 +207,3 @@ func (s *Service) CreateOrder(ctx context.Context, userID int64, req *CreateOrde
 	return &Order{}, nil
 }
 
-func calcFreight(adder *AddressSnapshot)

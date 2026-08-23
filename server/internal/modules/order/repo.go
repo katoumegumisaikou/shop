@@ -6,6 +6,21 @@ import (
 	"gorm.io/gorm"
 )
 
+// OrderRepo 订单数据访问接口。
+type OrderRepo interface {
+	// InsertOrder 事务内插入订单主表 + 明细表。
+	InsertOrder(ctx context.Context, o *Order, items []*OrderItem) error
+	// FindSKUsByIDs 批量按 SKU ID 查 SKU + Product 信息,返回以 skuID 为键的 map。
+	// 不存在的 skuID 不会出现在返回 map 里（调用方按 skuID 取值要做 missing 检查）。
+	FindSKUsByIDs(ctx context.Context, skuIDs []int64) (map[int64]*OrderSKUInfo, error)
+	// GetByID 按主键查订单。
+	GetByID(ctx context.Context, id int64) (*Order, error)
+	// ListByUserID 分页查用户的订单。
+	ListByUserID(ctx context.Context, userID int64, page, pageSize int) ([]*Order, int, error)
+	// UpdateStatus 更新订单状态。
+	UpdateStatus(ctx context.Context, id int64, status string) error
+}
+
 // orderRepoImpl OrderRepo 的 gorm 实现。
 type orderRepoImpl struct{ db *gorm.DB }
 
