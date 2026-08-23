@@ -263,7 +263,7 @@ func getJWTTokenFromCtx(c *gin.Context) (string, bool) {
 
 // isBlacklisted 检查 JTI 是否在 Redis 黑名单中。
 func isBlacklisted(ctx context.Context, rdb *redis.Client, jti string) (bool, error) {
-	result, err := rdb.Exists(ctx, fmt.Sprintf("jwt:bl:%s", jti)).Result()
+	result, err := rdb.Exists(ctx, fmt.Sprintf("shop:jwt:bl:%s", jti)).Result()
 	if err != nil {
 		return false, err
 	}

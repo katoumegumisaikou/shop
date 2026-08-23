@@ -15,6 +15,19 @@ type Repo interface {
 	//   - parentCode 非空时 JOIN 父级表，WHERE p.code = ? 命中
 	// 单条 SQL 同时拿 region 字段 + HasChildren，避免先查 id 再查 children 的 2 次往返。
 	ListByParentCode(ctx context.Context, parentCode string) ([]Region, error)
+	// GetRegionChain 根据区级 code 返回完整链路(区 → 市 → 省),单条 SQL 三层 LEFT JOIN。
+	// 用于下单时构造 AddressSnapshot(把区级 code 补全为省/市/区三段)。
+	GetRegionChain(ctx context.Context, districtCode string) (*RegionChain, error)
+}
+
+// RegionChain 区 → 市 → 省的完整链路(下单固化地址快照用)。
+type RegionChain struct {
+	DistrictCode string
+	DistrictName string
+	CityCode     string
+	CityName     string
+	ProvinceCode string
+	ProvinceName string
 }
 
 type repoImpl struct{ db *gorm.DB }
@@ -52,4 +65,29 @@ func (r *repoImpl) ListByParentCode(ctx context.Context, parentCode string) ([]R
 
 	err := q.Order("r.sort ASC, r.id ASC").Find(&regions).Error
 	return regions, err
+}
+
+// GetRegionChain 单条 SQL 三层 LEFT JOIN 拿 区/市/省 完整链路。
+// 用 d.name 系列别名(无歧义),比 RECURSIVE CTE 更易读且 3 级场景够用。
+// 找不到 district 时返回空 chain(不报错),由调用方自行判 missing。
+func (r *repoImpl) GetRegionChain(ctx context.Context, districtCode string) (*RegionChain, error) {
+	var chain RegionChain
+	err := r.db.WithContext(ctx).
+		Table("region AS d").
+		Select(`
+			d.code AS district_code,
+			d.name AS district_name,
+			c.code AS city_code,
+			c.name AS city_name,
+			p.code AS province_code,
+			p.name AS province_name
+		`).
+		Joins("LEFT JOIN region c ON c.id = d.parent_id").
+		Joins("LEFT JOIN region p ON p.id = c.parent_id").
+		Where("d.code = ?", districtCode).
+		Scan(&chain).Error
+	if err != nil {
+		return nil, err
+	}
+	return &chain, nil
 }

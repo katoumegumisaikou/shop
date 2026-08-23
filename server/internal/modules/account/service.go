@@ -228,6 +228,7 @@ type LoginResult struct {
 
 type RegisterResult LoginResult
 
+// note: 小程序登录流程 前端调用wx.login获取到code->发送到后端->后端调用微信接口获取到openid、unionid和sessionkey（用于解密用户信息）
 // MpLogin 小程序登录（code2session → upsert → 签发 JWT）。
 func (s *Service) MpLogin(ctx context.Context, code string) (*LoginResult, error) {
 	if err := s.checkMpLoginDependencies(); err != nil {
@@ -526,7 +527,7 @@ func (s *Service) blacklistTokenClaims(ctx context.Context, claims *pkgjwt.Claim
 		return errs.ErrUnauth
 	}
 
-	tokenKey := fmt.Sprintf("jwt:bl:%s", claims.JTI)
+	tokenKey := fmt.Sprintf("shop:jwt:bl:%s", claims.JTI)
 	ok, err := s.rdb.SetNX(ctx, tokenKey, "1", exp).Result()
 	if err != nil {
 		return errs.ErrInternal

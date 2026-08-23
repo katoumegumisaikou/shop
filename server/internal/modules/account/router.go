@@ -27,8 +27,12 @@ func RegisterRoutes(r *gin.RouterGroup, h *Handler, rdb *redis.Client, db *gorm.
 		auth := c.Group("/auth")
 		auth.POST("/mp/login", h.MpLogin)
 		auth.POST("/sms/code", h.SendSmsCode)
+
+		// note: 公众号登录 前端请求->后端生成访问微信api的url，同时里面携带着微信向哪个接口返回code的api->前端拿着url
+		// note: 去访问微信->微信返回授权页面->用户授权->微信返回302，让浏览器调用回调函数，返回code->后端用code换取openid和access_key->登录成功
 		auth.GET("/h5/code", h.H5GetOAuthURL)
 		auth.GET("/h5/callback", h.H5Callback)
+
 		// sensitive 必须在 userAuth 之前，否则 auth 中间件读取 sensitive flag 时仍为 false
 		auth.POST("/bind-phone", sensitive, userAuth, userLimiter, h.BindPhone)
 		auth.POST("/refresh", h.RefreshToken)
