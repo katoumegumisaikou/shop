@@ -22,6 +22,7 @@ import (
 	"shop/internal/modules/account"
 	"shop/internal/modules/address"
 	"shop/internal/modules/cart"
+	"shop/internal/modules/order"
 	"shop/internal/modules/product"
 	pkgjwt "shop/internal/pkg/jwt"
 	"shop/internal/pkg/region"
@@ -107,6 +108,12 @@ func main() {
 	addressSvc := address.NewService(addressRepo, rdb, wxMP, regionRepo, appLogger)
 	addressHandler := address.NewHandler(addressSvc)
 
+	// Order 模块：下单(依赖 productRepo / addressRepo / regionRepo / thresholdRepo)
+	orderRepo := order.NewOrderRepo(db)
+	thresholdRepo := order.NewFreightThresholdRepo(db)
+	orderSvc := order.NewService(orderRepo, productRepo, addressRepo, regionRepo, thresholdRepo, rdb, appLogger)
+	orderHandler := order.NewHandler(orderSvc)
+
 	// 7. 注册路由
 	r := gin.New()
 	r.Use(gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, recovered any) {
@@ -145,6 +152,7 @@ func main() {
 	api := r.Group("/api/v1")
 	account.RegisterRoutes(api, handler, rdb, db, userCfg)
 	cart.RegisterRoutes(api, cartHandler, rdb, db, userCfg)
+	order.RegisterRoutes(api, orderHandler, rdb, db, userCfg)
 	address.RegisterRoutes(api, addressHandler, rdb, db, userCfg)
 
 	// 8. 启动

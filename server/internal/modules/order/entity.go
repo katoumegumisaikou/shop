@@ -219,7 +219,26 @@ type FreightTemplateRule struct {
 	UpdatedAt time.Time
 
 	// 关联(规则 → 地区多对多)
-	Regions []FreightRuleRegion `gorm:"foreignKey:RuleID"`
+	// json:"-" 跳过 JSON 序列化,避免关联字段污染缓存
+	Regions []FreightRuleRegion `gorm:"foreignKey:RuleID" json:"-"`
 
-	Template FreightTemplate `gorm:"foreignKey:TemplateID"`
+	Template FreightTemplate `gorm:"foreignKey:TemplateID" json:"-"`
 }
+
+// FreightOrderThreshold 整单免运阈值(全局生效)。
+//
+// 不绑具体模板——所有订单按"地址区域 + 阈值"判断。
+// 典型配置:普通地区满 ¥99 包邮,偏远地区满 ¥199 包邮。
+//
+// 一张表最多 2 行(is_remote 唯一约束保证):is_remote=false 和 true 各一条。
+// 找不到(没配)= 不启用整单免运,按 product 正常算。
+type FreightOrderThreshold struct {
+	ID             int64     `gorm:"primaryKey"`
+	ThresholdCents int64     `gorm:"not null"`
+	IsRemote       bool      `gorm:"not null;default:false;uniqueIndex:uk_freight_order_threshold_remote"`
+	Remark         string    `gorm:"size:256;default:''"`
+	CreatedAt      time.Time `gorm:"not null;default:now()"`
+	UpdatedAt      time.Time `gorm:"not null;default:now()"`
+}
+
+func (FreightOrderThreshold) TableName() string { return "freight_order_threshold" }
